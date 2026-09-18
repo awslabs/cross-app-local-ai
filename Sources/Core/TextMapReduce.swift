@@ -45,14 +45,15 @@ enum TextMapReduceError: Error, LocalizedError, Equatable {
 ///   results rather than from the source text directly.
 enum TextMapReduce {
 
-    /// Ceiling on reduce levels before `mapReduce` gives up.
+    /// Floor on reduce levels, and the ceiling used for any input small
+    /// enough that `dynamicMaxDepth` would not raise it further.
     ///
     /// Each level shrinks the text by roughly the transform's compression
-    /// ratio, so four levels covers an enormous input for any transform that
-    /// actually summarizes. Hitting the ceiling means the transform is barely
-    /// compressing, which is a caller problem worth surfacing rather than
-    /// grinding through indefinitely.
-    static let defaultMaxReduceDepth = 4
+    /// ratio, so a handful of levels covers a modest input for any transform
+    /// that actually summarizes. Hitting the ceiling means the transform is
+    /// barely compressing, which is a caller problem worth surfacing rather
+    /// than grinding through indefinitely.
+    static let minReduceDepth = 4
 
     /// Separator used when rejoining one level's results before the next.
     /// A blank line reads as a paragraph break to every model we target.
@@ -248,7 +249,11 @@ enum TextMapReduce {
     /// - Parameters:
     ///   - text: The full body of text. May be empty.
     ///   - maxTokens: Per-chunk token budget for every level.
-    ///   - maxDepth: Ceiling on reduce levels. Zero forbids reducing at all.
+    ///   - maxDepth: Ceiling on reduce levels. `nil` (the default) computes a
+    ///     ceiling from the number of chunks the initial map pass produced,
+    ///     via `dynamicMaxDepth`, so long inputs get more headroom than short
+    ///     ones instead of sharing one fixed ceiling. Pass an explicit value
+    ///     (zero forbids reducing at all) to override that.
     ///   - concurrency: Maximum number of chunks transformed at once, at
     ///     every level (map and each reduce pass). See `map`'s parameter of
     ///     the same name.
@@ -266,7 +271,7 @@ enum TextMapReduce {
     static func mapReduce(
         _ text: String,
         maxTokens: Int,
-        maxDepth: Int = defaultMaxReduceDepth,
+        maxDepth: Int? = nil,
         concurrency: Int = 1,
         onProgress: (@Sendable (Int, Int) async -> Void)? = nil,
         map mapTransform: @escaping @Sendable (String) async throws -> String,
@@ -283,11 +288,12 @@ enum TextMapReduce {
         guard let single = mapped.first else { return "" }
         if mapped.count == 1 { return single }
 
+        let depthCeiling = maxDepth ?? dynamicMaxDepth(forChunkCount: mapped.count)
         var current = mapped.joined(separator: joinSeparator)
         var depth = 0
 
         while true {
-            guard depth < maxDepth else {
+            guard depth < depthCeiling else {
                 throw TextMapReduceError.depthExhausted(depth: depth)
             }
 
@@ -311,5 +317,27 @@ enum TextMapReduce {
                 throw TextMapReduceError.reductionStalled(depth: depth)
             }
         }
+    }
+
+    /// Computes a reduce-depth ceiling that scales with the initial map's
+    /// chunk count, rather than sharing one fixed ceiling across every input
+    /// size.
+    ///
+    /// Each reduce level folds joined content by roughly the reduce
+    /// transform's compression ratio, so the number of levels needed to fold
+    /// `count` pieces down to one grows with the log of `count`. A log base
+    /// of 2 assumes at worst halving per level -- weaker than the "roughly a
+    /// third" the read-aloud summarize prompts target -- and two extra levels
+    /// of headroom absorb passes that fall short of even that, so a transform
+    /// that compresses reasonably well converges long before hitting this
+    /// ceiling. `minReduceDepth` floors the result so small inputs keep
+    /// today's ceiling unchanged.
+    ///
+    /// - Parameter count: Number of pieces the initial map pass produced.
+    /// - Returns: A ceiling on reduce levels, at least `minReduceDepth`.
+    static func dynamicMaxDepth(forChunkCount count: Int) -> Int {
+        guard count > 1 else { return minReduceDepth }
+        let estimated = Int(log2(Double(count)).rounded(.up)) + 2
+        return max(minReduceDepth, estimated)
     }
 }

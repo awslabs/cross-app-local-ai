@@ -437,4 +437,79 @@ struct TextMapReduceMapReduceTests {
         )
         #expect(await recorder.progressCompleted == [0, 1, 2, 3, 4])
     }
+
+    /// Repeats `sentence` enough times to pack 20 initial chunks at
+    /// `twoSentenceBudget`. Verified empirically (see git history for the
+    /// throwaway diagnostic used to derive this): the halving reduce
+    /// transform below needs exactly 7 levels to converge from 20 chunks,
+    /// one more than `minReduceDepth` but exactly `dynamicMaxDepth(20)` --
+    /// tight enough to prove the fixed floor is insufficient while the
+    /// dynamic ceiling is exactly sufficient.
+    private static let manySentences = String(repeating: sentence, count: 40)
+
+    /// Halves each chunk's own text on every reduce pass. Unlike the
+    /// constant-output reduce transforms used elsewhere in this file, this
+    /// one keeps shrinking proportionally to its input, which is what
+    /// forces multiple reduce levels instead of converging in one or two.
+    private static let halvingReduce: @Sendable (String) async throws -> String = { text in
+        String(text.prefix(max(1, text.count / 2))) + ". "
+    }
+
+    @Test("an explicit depth ceiling still overrides the dynamic calculation")
+    func explicitDepthOverridesDynamicCalculation() async {
+        await #expect(throws: TextMapReduceError.depthExhausted(depth: TextMapReduce.minReduceDepth)) {
+            _ = try await TextMapReduce.mapReduce(
+                Self.manySentences,
+                maxTokens: twoSentenceBudget,
+                maxDepth: TextMapReduce.minReduceDepth,
+                map: { $0 },
+                reduce: Self.halvingReduce
+            )
+        }
+    }
+
+    @Test("the dynamic ceiling gives a large input enough levels to converge")
+    func dynamicCeilingConvergesForLargeInput() async throws {
+        // Same input and reduce transform as the override test above, but
+        // with no explicit maxDepth: the dynamic ceiling scales with the 20
+        // initial chunks instead of sharing the small fixed ceiling, so this
+        // converges instead of throwing depthExhausted.
+        let result = try await TextMapReduce.mapReduce(
+            Self.manySentences,
+            maxTokens: twoSentenceBudget,
+            map: { $0 },
+            reduce: Self.halvingReduce
+        )
+        #expect(!result.isEmpty)
+    }
+}
+
+// MARK: - dynamicMaxDepth
+
+@Suite("TextMapReduce.dynamicMaxDepth")
+struct DynamicMaxDepthTests {
+
+    @Test("a chunk count of one or fewer uses the floor")
+    func floorForTrivialCounts() {
+        #expect(TextMapReduce.dynamicMaxDepth(forChunkCount: 0) == TextMapReduce.minReduceDepth)
+        #expect(TextMapReduce.dynamicMaxDepth(forChunkCount: 1) == TextMapReduce.minReduceDepth)
+    }
+
+    @Test("a small chunk count does not exceed the floor")
+    func floorForSmallCounts() {
+        #expect(TextMapReduce.dynamicMaxDepth(forChunkCount: 4) == TextMapReduce.minReduceDepth)
+    }
+
+    @Test("a large chunk count raises the ceiling above the floor")
+    func scalesAboveFloorForLargeCounts() {
+        #expect(TextMapReduce.dynamicMaxDepth(forChunkCount: 200) > TextMapReduce.minReduceDepth)
+    }
+
+    @Test("the ceiling grows monotonically with chunk count")
+    func growsMonotonicallyWithCount() {
+        #expect(
+            TextMapReduce.dynamicMaxDepth(forChunkCount: 1000)
+                > TextMapReduce.dynamicMaxDepth(forChunkCount: 200)
+        )
+    }
 }

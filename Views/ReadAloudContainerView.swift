@@ -141,8 +141,13 @@ struct ReadAloudContainerView: View {
     }
 
     private var controlDivider: some View {
+        // A bare `Divider()` already fills the cross axis of its containing
+        // `HStack` on its own -- an explicit `.frame(maxHeight: .infinity)`
+        // requests infinite height, and that request propagates up through
+        // `controlsBlock` and `toolbar` into the outer `VStack`, where it
+        // competes with `textArea`'s own infinite frame and balloons the
+        // whole toolbar row to roughly half the panel.
         Divider()
-            .frame(maxHeight: .infinity)
     }
 
     private var transportGroup: some View {
