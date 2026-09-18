@@ -1,0 +1,267 @@
+name: FastLang
+options:
+  bundleIdPrefix: com.aws
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  groupSortPosition: top
+
+packages:
+  Stencil:
+    url: https://github.com/stencilproject/Stencil
+    exactVersion: "0.15.1"
+  HotKey:
+    url: https://github.com/soffes/HotKey
+    exactVersion: "0.2.1"
+  # Local LLM runtime — wraps llama.cpp and exposes LocalLLMClient /
+  # LocalLLMClientLlama modules that LlamaCppProvider imports.
+  LocalLLMClient:
+    url: https://github.com/tattn/LocalLLMClient.git
+    exactVersion: "0.5.0"
+  # On-device speech-to-text optimized for Apple Silicon. The
+  # `argmax-oss-swift` umbrella package re-exports WhisperKit with a
+  # transformer-version dependency graph compatible with LocalLLMClient
+  # (both land on swift-transformers 1.3.0). Using argmaxinc/WhisperKit
+  # directly pins to an older transformers and conflicts with
+  # LocalLLMClient.
+  argmax-oss-swift:
+    url: https://github.com/argmaxinc/argmax-oss-swift.git
+    exactVersion: "1.0.0"
+  # HuggingFace transformers wrapper — `Hub` product is imported by
+  # KokoroDownloader. It's a transitive dep of argmax-oss-swift and
+  # LocalLLMClient but we have to declare it explicitly here so the
+  # consumer (FastLang) has it on the module search path.
+  swift-transformers:
+    url: https://github.com/huggingface/swift-transformers
+    exactVersion: "1.3.0"
+  # yyjson is imported by `Hub`. Same story: declare it explicitly so
+  # the import resolver finds it from FastLang.
+  yyjson:
+    url: https://github.com/ibireme/yyjson.git
+    exactVersion: "0.12.0"
+  # AWS SDK for Bedrock LLM provider (gated behind BEDROCK_ENABLED)
+  aws-sdk-swift:
+    url: https://github.com/awslabs/aws-sdk-swift
+    exactVersion: "1.6.102"
+  # Security floors for the SwiftNIO family. These are TRANSITIVE deps of
+  # aws-sdk-swift (via smithy-swift / async-http-client) — FastLang does not
+  # import them directly. They are declared here only to raise the minimum
+  # resolved version to the SwiftNIO security release that fixes:
+  #   swift-nio 2.100.0  — CVE-2026-28970 (CRLF injection), CVE-2026-28980
+  #                        (unbounded header DoS), CVE-2026-43671 (ByteBuffer OOB)
+  #   swift-nio-http2 1.44.0 — CVE-2026-28898 (HTTP/2→1 request smuggling)
+  #   swift-nio-extras 1.34.1 — CVE-2026-28975 (decompression ratio bypass)
+  # `from:` (not exactVersion) so future patch/minor upgrades resolve freely.
+  swift-nio:
+    url: https://github.com/apple/swift-nio.git
+    from: "2.100.0"
+  swift-nio-http2:
+    url: https://github.com/apple/swift-nio-http2.git
+    from: "1.44.0"
+  swift-nio-extras:
+    url: https://github.com/apple/swift-nio-extras.git
+    from: "1.34.1"
+
+targets:
+  FastLang:
+    type: application
+    platform: macOS
+    sources:
+      - path: FastLang
+      - path: Sources
+        excludes:
+          # The XPC helper compiles into its own target below.
+          - "XPCServices/**"
+      - path: Views
+    # Debug signing entry point. Local.xcconfig is tracked (so this reference
+    # always validates, including on CI) and optionally includes a gitignored
+    # per-developer Local.private.xcconfig for a stable Apple Development
+    # identity, so macOS TCC grants survive rebuilds. Release signing is
+    # handled by Tools/packaging and is unaffected. Target build settings
+    # below still win over this base xcconfig; it only supplies signing keys.
+    configFiles:
+      Debug: Local.xcconfig
+    settings:
+      base:
+        INFOPLIST_FILE: FastLang/Info.plist
+        CODE_SIGN_ENTITLEMENTS: FastLang/FastLang.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.aws.fastlang
+        PRODUCT_NAME: FastLang
+        # Pin the Swift module name to "FastLang" so it stays stable across
+        # configs. Without this, the Debug PRODUCT_NAME ("FastLang-Dev") would
+        # make the module "FastLang_Dev", breaking `@testable import FastLang`
+        # in the test targets and changing type names in logs.
+        PRODUCT_MODULE_NAME: FastLang
+        MARKETING_VERSION: "0.7.1"
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # LocalLLMClientLlamaC's headers (utils.h) include <memory> and
+        # gate on __cplusplus. The clang module compile must run in
+        # Objective-C++ mode for those headers to find the C++ stdlib
+        # and satisfy the __cplusplus guard. SWIFT_OBJC_INTEROP_MODE
+        # controls how Swift's clang importer compiles imported modules
+        # (objc vs objcxx); objcxx is what the pre-xcodegen committed
+        # .pbxproj used and what makes LocalLLMClientLlamaC compile.
+        SWIFT_OBJC_INTEROP_MODE: objcxx
+        CLANG_CXX_LANGUAGE_STANDARD: gnu++17
+        CLANG_CXX_LIBRARY: libc++
+        # Telemetry API config injected at build time. Empty values = disabled (OSS).
+        TELEMETRY_API_DOMAIN: "$(TELEMETRY_API_DOMAIN)"
+        TELEMETRY_API_TOKEN: "$(TELEMETRY_API_TOKEN)"
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG BEDROCK_ENABLED"
+          # Debug builds get a distinct app identity (FastLang-Dev.app /
+          # com.aws.fastlang.dev) so macOS Accessibility/TCC permission grants
+          # attach to a dedicated dev identity — they persist across rebuilds
+          # and don't collide with an installed release build.
+          # See README "Code Signing and Permissions".
+          PRODUCT_NAME: "FastLang-Dev"
+          PRODUCT_BUNDLE_IDENTIFIER: com.aws.fastlang.dev
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) BEDROCK_ENABLED"
+    dependencies:
+      - package: Stencil
+      - package: HotKey
+      - package: LocalLLMClient
+        product: LocalLLMClient
+      - package: LocalLLMClient
+        product: LocalLLMClientLlama
+      - package: argmax-oss-swift
+        product: WhisperKit
+      - package: swift-transformers
+        product: Hub
+      - package: yyjson
+        product: yyjson
+      - package: aws-sdk-swift
+        product: AWSBedrockRuntime
+      # Embed the unsandboxed XPC helper into
+      # FastLang.app/Contents/XPCServices/. The main app reaches it via
+      # NSXPCConnection(serviceName:); no extra entitlement is needed
+      # for the connection because the service is inside our bundle.
+      - target: BedrockCredentialHelper
+        embed: true
+    entitlements:
+      path: FastLang/FastLang.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.files.user-selected.read-write: true
+        com.apple.security.device.audio-input: true
+    info:
+      path: FastLang/Info.plist
+      properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSMicrophoneUsageDescription: "FastLang uses the microphone for push-to-talk speech-to-text input."
+        TelemetryAPIDomain: "$(TELEMETRY_API_DOMAIN)"
+        TelemetryAPIToken: "$(TELEMETRY_API_TOKEN)"
+
+  # Non-sandboxed XPC service that performs credential_process exec on
+  # behalf of the sandboxed main app. The whole reason this exists is
+  # that macOS App Sandbox blocks the main app from exec'ing the user's
+  # configured credential_process binary (a standard AWS mechanism;
+  # Amazon's internal isengardcli is one example, not a requirement);
+  # we delegate that to a separate process without sandbox restrictions.
+  BedrockCredentialHelper:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - path: Sources/XPCServices/BedrockCredentialHelper
+        excludes:
+          - "Info.plist"
+          - "*.entitlements"
+      # Shared @objc protocol — the same file is compiled into both
+      # targets so NSXPCConnection can resolve the type in both
+      # processes.
+      - path: Sources/Providers/Bedrock/BedrockHelperProtocol.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aws.fastlang.bedrock-credential-helper
+        PRODUCT_NAME: BedrockCredentialHelper
+        INFOPLIST_FILE: Sources/XPCServices/BedrockCredentialHelper/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/XPCServices/BedrockCredentialHelper/Helper.entitlements
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SKIP_INSTALL: "YES"
+
+  UnitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/UnitTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aws.fastlang.unittests
+        GENERATE_INFOPLIST_FILE: "YES"
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        # Match FastLang target so the test runner can link against
+        # the host app's C++-interop'd modules without re-importing
+        # them in plain objc mode.
+        SWIFT_OBJC_INTEROP_MODE: objcxx
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG BEDROCK_ENABLED"
+          # Debug renames the product to "FastLang-Dev", so the auto-derived
+          # TEST_HOST (FastLang.app, from the target/product name) is wrong for
+          # this config. Set it explicitly in both configs. BUNDLE_LOADER
+          # references $(TEST_HOST), so it follows automatically.
+          TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FastLang-Dev.app/Contents/MacOS/FastLang-Dev"
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) BEDROCK_ENABLED"
+          TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FastLang.app/Contents/MacOS/FastLang"
+    dependencies:
+      - target: FastLang
+
+  IntegrationTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/IntegrationTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aws.fastlang.integrationtests
+        GENERATE_INFOPLIST_FILE: "YES"
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_OBJC_INTEROP_MODE: objcxx
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG BEDROCK_ENABLED"
+          # See UnitTests above: products are FastLang-Dev.app / FastLang.app.
+          TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FastLang-Dev.app/Contents/MacOS/FastLang-Dev"
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) BEDROCK_ENABLED"
+          TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FastLang.app/Contents/MacOS/FastLang"
+    dependencies:
+      - target: FastLang
+
+schemes:
+  FastLang:
+    build:
+      targets:
+        FastLang: all
+        UnitTests: [test]
+        IntegrationTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - UnitTests
+        - IntegrationTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

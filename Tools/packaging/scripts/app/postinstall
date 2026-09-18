@@ -1,0 +1,20 @@
+#!/bin/bash
+# Postinstall for the FastLang app component.
+#
+# 1. Registers the app with Launch Services so Spotlight can find it immediately.
+# 2. Launches the app for the console user.
+
+set -u
+
+APP_PATH="/Applications/FastLang.app"
+
+# Register with Launch Services for Spotlight indexing
+/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f "${APP_PATH}" 2>/dev/null || true
+
+# Launch the app as the console user (not as root)
+CONSOLE_USER=$(stat -f%Su /dev/console 2>/dev/null || true)
+if [ -n "${CONSOLE_USER}" ] && [ "${CONSOLE_USER}" != "root" ]; then
+    sudo -u "${CONSOLE_USER}" open "${APP_PATH}" 2>/dev/null || true
+fi
+
+exit 0

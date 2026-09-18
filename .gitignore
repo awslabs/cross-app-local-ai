@@ -1,0 +1,76 @@
+# Build
+.build/
+DerivedData/
+build/
+
+# SPM
+.swiftpm/xcode/
+Package.pins
+
+# Xcode
+xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.playground/timeline.xctimeline
+*.playground/playground.xcworkspace/
+
+# Per-developer local Debug signing overrides (Local.xcconfig is tracked and
+# optionally includes this gitignored file). See Local.xcconfig.
+Local.private.xcconfig
+
+# macOS
+.DS_Store
+._*
+
+# Scratch / repro scripts
+scratch/
+
+# Claude Code -- keep .claude/CLAUDE.md (project instructions), ignore local settings
+.claude/settings.local.json
+
+# MCP server config (local)
+.mcp.json
+
+# IDE
+*.swp
+*~
+.vscode/
+.idea/
+.kiro/
+
+# Security scanner output (ASH / Automated Security Helper)
+.ash/
+
+# Code coverage
+*.profraw
+*.profdata
+codecov/
+
+# Archives & distribution
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.app
+*.pkg
+*.dmg
+
+# Secrets
+.env
+*.pem
+*.p12
+*.p8
+Keys/
+
+# XcodeGen — the Xcode project is GENERATED from project.yml (the source of
+# truth) and must not be committed or hand-edited. Run `make generate`
+# (or `xcodegen generate`) after editing project.yml or a fresh checkout.
+# The one exception is Package.resolved: it's kept for reproducible SPM
+# dependency resolution (see engineering-standards / threat model M7).
+/FastLang.xcodeproj/*
+!/FastLang.xcodeproj/project.xcworkspace
+/FastLang.xcodeproj/project.xcworkspace/*
+!/FastLang.xcodeproj/project.xcworkspace/xcshareddata
+/FastLang.xcodeproj/project.xcworkspace/xcshareddata/*
+!/FastLang.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+/FastLang.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!/FastLang.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

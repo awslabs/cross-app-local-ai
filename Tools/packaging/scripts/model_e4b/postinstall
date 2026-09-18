@@ -1,0 +1,34 @@
+#!/bin/bash
+# Postinstall for the E4B model choice.
+#
+# Runs as root. Drops a marker in the console user's Application Support
+# directory. On first launch the app sees the marker, sets the chosen
+# model ID, removes the marker, and starts the in-app download.
+#
+# Marker name must match `pkgMarkerE4B` in Sources/App/Storage.swift.
+
+set -u
+
+MARKER_NAME=".download-e4b-on-launch"
+COUNTERPART=".download-e2b-on-launch"
+
+CONSOLE_USER=$(stat -f%Su /dev/console 2>/dev/null || true)
+if [ -z "${CONSOLE_USER}" ] || [ "${CONSOLE_USER}" = "root" ]; then
+    CONSOLE_USER="${USER:-}"
+fi
+if [ -z "${CONSOLE_USER}" ] || [ "${CONSOLE_USER}" = "root" ]; then
+    echo "Cannot determine console user; skipping ${MARKER_NAME}." >&2
+    exit 0
+fi
+
+USER_HOME=$(dscl . -read "/Users/${CONSOLE_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+if [ -z "${USER_HOME}" ] || [ ! -d "${USER_HOME}" ]; then
+    echo "Cannot resolve home directory for ${CONSOLE_USER}; skipping marker." >&2
+    exit 0
+fi
+
+DATA_DIR="${USER_HOME}/Library/Application Support/com.aws.fastlang"
+sudo -u "${CONSOLE_USER}" /bin/mkdir -p "${DATA_DIR}"
+sudo -u "${CONSOLE_USER}" /bin/rm -f "${DATA_DIR}/${COUNTERPART}"
+sudo -u "${CONSOLE_USER}" /usr/bin/touch "${DATA_DIR}/${MARKER_NAME}"
+exit 0

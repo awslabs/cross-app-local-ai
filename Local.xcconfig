@@ -1,0 +1,23 @@
+// Debug signing entry point — TRACKED and committed.
+//
+// This file exists so `project.yml`'s `configFiles` reference is always
+// valid (xcodegen fails spec validation if the referenced xcconfig is
+// missing, which would break CI). It is otherwise a no-op.
+//
+// WHY YOU WANT THE OPTIONAL OVERRIDE BELOW
+// Without a stable signing identity the Debug build is ad-hoc signed, and
+// ad-hoc signing produces a new code hash on every build. macOS TCC keys
+// permission grants (Accessibility, Microphone) to that identity, so every
+// rebuild looks like a new app and your granted permissions are dropped.
+//
+// TO FIX LOCALLY (per developer)
+//   1. Find your Apple Development cert's SHA-1:
+//          security find-identity -v -p codesigning
+//   2. Create `Local.private.xcconfig` (gitignored) with:
+//          CODE_SIGN_STYLE = Manual
+//          CODE_SIGN_IDENTITY = <your-cert-SHA-1>
+//
+// SCOPE: Debug/local only. Release signing and notarization are handled by
+// Tools/packaging and are unaffected. If the private file is absent (e.g. on
+// CI), the optional include below is a no-op and the ad-hoc default stands.
+#include? "Local.private.xcconfig"

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>FastLang</title>
+    <organization>com.aws.fastlang</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="always" require-scripts="false" rootVolumeOnly="true"/>
+
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <os-version min="14.0"/>
+
+    <choices-outline>
+        <line choice="app"/>
+        <line choice="model_e2b"/>
+        <line choice="model_e4b"/>
+    </choices-outline>
+
+    <choice id="app"
+            title="FastLang application"
+            description="Installs FastLang.app into /Applications."
+            start_selected="true"
+            start_enabled="false"
+            visible="true">
+        <pkg-ref id="com.aws.fastlang.app"/>
+    </choice>
+
+    <!-- Model choices behave like checkboxes. The postinstalls are
+         mutually exclusive at the filesystem level (each clears the
+         counterpart's marker), so if the user ticks both, the last one
+         to run wins. -->
+    <choice id="model_e2b"
+            title="Gemma 4 E2B (balanced, ~3 GB)"
+            description="Recommended. Balanced speed and quality. The app downloads this ~3 GB model automatically on first launch."
+            start_selected="true"
+            start_enabled="true"
+            visible="true">
+        <pkg-ref id="com.aws.fastlang.model_e2b"/>
+    </choice>
+
+    <choice id="model_e4b"
+            title="Gemma 4 E4B (highest quality, ~4.8 GB)"
+            description="Higher quality at a larger size. The app downloads this ~4.8 GB model automatically on first launch. Leave unchecked to use E2B."
+            start_selected="false"
+            start_enabled="true"
+            visible="true">
+        <pkg-ref id="com.aws.fastlang.model_e4b"/>
+    </choice>
+
+    <pkg-ref id="com.aws.fastlang.app" version="0">app.pkg</pkg-ref>
+    <pkg-ref id="com.aws.fastlang.model_e2b" version="0">model_e2b.pkg</pkg-ref>
+    <pkg-ref id="com.aws.fastlang.model_e4b" version="0">model_e4b.pkg</pkg-ref>
+</installer-gui-script>

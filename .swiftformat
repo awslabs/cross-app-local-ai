@@ -1,0 +1,41 @@
+--swiftversion 6.0
+--minversion 0.54
+
+# File options
+--exclude scratch,DerivedData,.build,Tools
+
+# Format options
+--indent 4
+--indentcase false
+--trimwhitespace always
+--stripunusedargs closure-only
+--maxwidth 120
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--closingparen balanced
+--funcattributes prev-line
+--typeattributes prev-line
+--varattributes same-line
+
+# Sorting
+--importgrouping testable-last
+
+# Braces
+--allman false
+
+# Spacing
+--operatorfunc spaced
+--ranges spaced
+
+# Semicolons
+--semicolons never
+
+# Redundancy
+--redundanttype inferred
+
+# Disabled rules
+--disable blankLinesAtStartOfScope
+--disable blankLinesAtEndOfScope
+--disable wrapMultilineStatementBraces
+--disable redundantSelf
