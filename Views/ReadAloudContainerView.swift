@@ -24,7 +24,17 @@ struct ReadAloudContainerView: View {
     var body: some View {
         VStack(spacing: OverlayMetrics.spacing(scale: fontScale)) {
             textArea
-                .frame(maxHeight: .infinity)
+                // Bounded, not `.infinity`. `ReadAloudPanelController.sizeToContent()`
+                // sizes the NSPanel from `NSHostingView.fittingSize` -- SwiftUI's
+                // unconstrained ideal size. A descendant requesting infinite height
+                // makes that ideal size effectively unbounded, so the panel's
+                // `min(fitting.height, panelMaxHeight)` clamp always picks
+                // `panelMaxHeight`, regardless of how much text there actually is.
+                // Capping here keeps `fittingSize` finite and reflective of real
+                // content, matching the pattern in OverlayGeneratingView and
+                // OverlayApprovalView, which bound their own scroll areas the same
+                // way for the same reason.
+                .frame(maxHeight: ReadAloudMetrics.panelMaxHeight(scale: fontScale) - 140)
 
             if let errorMessage = appState.readAloudErrorMessage {
                 errorBanner(message: errorMessage)
