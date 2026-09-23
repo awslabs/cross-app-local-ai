@@ -292,7 +292,7 @@ struct TextInjectionConfig: Codable, Equatable {
 struct SttAppConfig: Codable, Equatable {
     var provider = "whisper"
     var language: String? = "en"
-    var enabled = false
+    var enabled = true
     var whisperModelId = "whisper-small"
     var whisperModelPath: String?
     /// Persistent UID of the preferred input device. `nil` means system default.
@@ -310,7 +310,7 @@ struct SttAppConfig: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? "whisper"
         language = try container.decodeIfPresent(String.self, forKey: .language) ?? "en"
-        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         whisperModelId = try container.decodeIfPresent(String.self, forKey: .whisperModelId) ?? "whisper-small"
         whisperModelPath = try container.decodeIfPresent(String.self, forKey: .whisperModelPath)
         audioInputDeviceUid = try container.decodeIfPresent(String.self, forKey: .audioInputDeviceUid)

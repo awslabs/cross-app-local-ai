@@ -64,7 +64,7 @@ struct ConfigTests {
     func defaultStt() {
         let config = Config()
         #expect(config.stt.provider == "whisper")
-        #expect(config.stt.enabled == false)
+        #expect(config.stt.enabled == true)
         #expect(config.stt.whisperModelId == "whisper-small")
     }
 

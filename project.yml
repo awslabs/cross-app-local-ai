@@ -94,7 +94,7 @@ targets:
         # make the module "FastLang_Dev", breaking `@testable import FastLang`
         # in the test targets and changing type names in logs.
         PRODUCT_MODULE_NAME: FastLang
-        MARKETING_VERSION: "0.7.4"
+        MARKETING_VERSION: "0.7.5"
         CURRENT_PROJECT_VERSION: 1
         SWIFT_VERSION: "6.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"

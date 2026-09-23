@@ -21,6 +21,25 @@ The key differentiator is that **all three AI capabilities can run entirely on-d
 - **Model integrity verification** — all model downloads are verified with streaming SHA-256 hashing and automatically re-downloaded on mismatch.
 - **Privacy-respecting telemetry** — anonymous, opt-out, daily-aggregate-only usage counts. The telemetry system is a no-op in builds without configured credentials, which is the default for anyone building from this source.
 
+## Screenshots
+
+**Menu bar** — access every feature from a single menu bar icon.
+
+<img src="docs/images/Menu_bar.png" width="520" alt="The FastLang icon in the macOS menu bar">
+
+**Settings** — configure LLM, STT, and TTS providers and models, hotkeys, and behavior.
+
+<img src="docs/images/settings.png" width="760" alt="The FastLang Settings panel">
+
+**Text refinement** — select text and press the hotkey to open the overlay with your prompt, then accept the result to insert it back in place.
+
+<img src="docs/images/text_editing_1.png" width="760" alt="Select text and press the hotkey to open the overlay with your prompt">
+<img src="docs/images/text_editing_2.png" width="760" alt="Accept the result and FastLang inserts it back in place">
+
+**Read aloud** — listen to selected text with word-level highlighting synced to playback.
+
+<img src="docs/images/tts.png" width="760" alt="Reading selected text aloud with FastLang">
+
 ## Architecture
 
 ```
