@@ -2,11 +2,15 @@
 #
 # Builds a distribution .pkg for FastLang and opens the installer.
 #
-# Layout: one required app component, two optional model components
-# (E2B and E4B) the user picks between on the Customize screen. The
-# chosen model's postinstall writes a marker file; on first launch the
-# app reads the marker, switches localModelId to match, and triggers
-# the in-app download (with progress bar in Settings).
+# Layout: one required app component, two optional Gemma model components
+# (E2B and E4B) the user picks between, and two required-but-informational
+# components (Whisper Small, Kokoro 82M) — all on the same Customize screen.
+# The chosen Gemma model's postinstall writes a marker file; on first launch
+# the app reads the marker, switches localModelId to match, and triggers the
+# in-app download (with progress bar in Settings). Whisper/Kokoro have no
+# postinstall side effects — the app downloads both unconditionally on first
+# launch regardless of installer state; they're listed only so their size
+# is disclosed on the Customize screen.
 #
 # Usage:
 #   ./Tools/packaging/build_pkg.sh              # default: full cycle
@@ -64,7 +68,9 @@ if [ "${BUILD_ONLY}" -eq 0 ]; then
     for pkg in "${BUNDLE_ID}.app" \
                "${BUNDLE_ID}.gemma" \
                "${BUNDLE_ID}.model_e2b" \
-               "${BUNDLE_ID}.model_e4b"; do
+               "${BUNDLE_ID}.model_e4b" \
+               "${BUNDLE_ID}.model_whisper" \
+               "${BUNDLE_ID}.model_kokoro"; do
         if pkgutil --pkg-info "${pkg}" >/dev/null 2>&1; then
             sudo pkgutil --forget "${pkg}" 2>/dev/null && echo "    forgot ${pkg}"
         fi
@@ -302,8 +308,16 @@ pkgbuild \
     "${DIST_DIR}/components/app.pkg"
 
 # ── Model components (marker-only, no payload) ──────────────────────────────
+#
+# model_e2b/model_e4b write a marker the app consumes on first launch to pick
+# a Gemma variant. model_whisper/model_kokoro have no-op postinstalls: the
+# app downloads Whisper Small and Kokoro 82M unconditionally on first launch
+# (AppState.prefetchSmallModelsIfNeeded()) regardless of installer state.
+# They're built as real (if payload-less) components purely so
+# Distribution.xml's installKBytes can disclose their size on the Customize
+# screen.
 
-for model in model_e2b model_e4b; do
+for model in model_e2b model_e4b model_whisper model_kokoro; do
     echo "==> Building ${model} component"
     script_dir="${PKG_ROOT}/scripts/${model}"
     chmod +x "${script_dir}/postinstall"

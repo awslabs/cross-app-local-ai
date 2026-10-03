@@ -344,7 +344,7 @@ enum TtsPreprocessing: String, Codable, CaseIterable, Equatable {
 }
 
 struct TtsAppConfig: Codable, Equatable {
-    var provider = "system"
+    var provider = "kokoro"
     var enabled = true
     var rate: Float = 0.5
     var voiceId: String?
@@ -364,7 +364,7 @@ struct TtsAppConfig: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? "system"
+        provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? "kokoro"
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         rate = try container.decodeIfPresent(Float.self, forKey: .rate) ?? 0.5
         voiceId = try container.decodeIfPresent(String.self, forKey: .voiceId)

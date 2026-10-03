@@ -22,13 +22,22 @@ enum TelemetryReporterError: LocalizedError, Sendable {
     }
 }
 
+// MARK: - TelemetrySubmitting
+
+/// Submission seam for `TelemetryService`, decoupled from the concrete
+/// networking implementation so submission-batching logic is testable
+/// without hitting the network.
+protocol TelemetrySubmitting: Sendable {
+    func submit(_ summary: DailySummary) async throws
+}
+
 // MARK: - TelemetryReporter
 
 /// Sends accumulated daily summaries to the telemetry API.
 ///
 /// Stateless: each `submit` call constructs a fresh URLRequest. The caller
 /// (TelemetryService) decides when and how often to invoke this.
-struct TelemetryReporter: Sendable {
+struct TelemetryReporter: TelemetrySubmitting, Sendable {
     private let config: TelemetryConfig
     private let session: URLSession
 

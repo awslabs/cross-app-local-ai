@@ -19,7 +19,7 @@ private let initialSubmissionDelaySeconds: UInt64 = 60
 /// are no-ops. This keeps call sites unconditional.
 actor TelemetryService {
     private let store: TelemetryStore
-    private let reporter: TelemetryReporter
+    private let reporter: TelemetrySubmitting
     private let config: TelemetryConfig
     private let isUserEnabled: @MainActor () -> Bool
 
@@ -34,16 +34,19 @@ actor TelemetryService {
     ///   - osVersion: macOS version string.
     ///   - isUserEnabled: Closure that returns the current user opt-in state.
     ///     Evaluated at each operation, so toggling in Settings takes effect immediately.
+    ///   - reporter: Submission transport (injectable for tests). Defaults to a real
+    ///     `TelemetryReporter` built from `telemetryConfig`.
     init(
         dataDir: URL,
         telemetryConfig: TelemetryConfig,
         deviceId: String,
         appVersion: String,
         osVersion: String,
-        isUserEnabled: @escaping @MainActor @Sendable () -> Bool
+        isUserEnabled: @escaping @MainActor @Sendable () -> Bool,
+        reporter: TelemetrySubmitting? = nil
     ) {
         self.config = telemetryConfig
-        self.reporter = TelemetryReporter(config: telemetryConfig)
+        self.reporter = reporter ?? TelemetryReporter(config: telemetryConfig)
         self.isUserEnabled = isUserEnabled
         self.store = TelemetryStore(
             dataDir: dataDir,
@@ -106,12 +109,13 @@ actor TelemetryService {
                 await store.deleteSummary(for: summary.date)
                 logger.debug("Successfully submitted and cleared telemetry for \(summary.date)")
             } catch {
+                // Log and move on to the next summary. A single permanently-rejected
+                // day (e.g. malformed historical data) must not block every other
+                // pending day from ever being attempted in this cycle.
                 logger
                     .error(
                         "Failed to submit telemetry for \(summary.date): \(error.localizedDescription, privacy: .public)"
                     )
-                // Stop on first failure; retry next cycle
-                break
             }
         }
     }

@@ -6,6 +6,12 @@ All three core models (LLM, STT, TTS) can run entirely on-device for maximum pri
 
 > The Xcode project, scheme, and bundle identifier are named `FastLang` for historical reasons. `FastLang` and `cross-app-local-ai` refer to the same application throughout this repository and its documentation.
 
+<p align="center">
+  <a href="FastLang-PromoVideo.mp4">
+    <img src="docs/images/promo-video-thumbnail.png" width="760" alt="Watch the FastLang promo video">
+  </a>
+</p>
+
 ## Why
 
 Knowledge workers context-switch constantly — drafting an email, editing a chat message, writing code comments — and each time AI assistance is needed, that usually means copying text out, switching to a separate chat window, pasting, waiting, copying the result back, and switching again. `cross-app-local-ai` removes that friction: press a hotkey, get a floating overlay above your current app, and accept the result with a single click or Escape to dismiss.

@@ -457,12 +457,17 @@ final class AppState {
         let sttModelId = Self.sttAutoPrefetchModelId
         if config.stt.enabled,
            !config.stt.acknowledgedAutoPrefetch,
+           sttDownloadState == nil,
            !WhisperKitModelManager.isModelCached(sttModelId) {
             logger.info("Silent prefetch: starting \(sttModelId) download")
+            sttDownloadState = .active(modelId: sttModelId, percent: 0)
             Task.detached(priority: .background) { [weak self] in
                 let stream = WhisperKitModelManager.startModelDownload(modelId: sttModelId)
                 for await progress in stream {
                     switch progress {
+                    case let .progress(downloaded, total):
+                        let percent = total > 0 ? Int(Double(downloaded) / Double(total) * 100) / 10 * 10 : 0
+                        await self?.setSttDownloadState(.active(modelId: sttModelId, percent: percent))
                     case .complete:
                         logger.info("Silent prefetch: \(sttModelId) completed")
                         // Delay before reconstructing the service.
@@ -480,13 +485,18 @@ final class AppState {
                         try? await Task.sleep(for: .seconds(5))
                         await self?.reconstructSttService()
                         await self?.acknowledgeSttPrefetch()
+                        await self?.setSttDownloadState(nil)
                     case let .error(message):
                         logger
                             .error(
                                 "Silent prefetch: \(sttModelId, privacy: .public) failed: \(message, privacy: .public)"
                             )
-                    case .progress:
-                        break
+                        // Unlike the manual download path, a silent prefetch
+                        // failure has no confirmation flow to fall back to,
+                        // so we leave `.failed` in place (rather than clearing
+                        // to `nil`) so Settings surfaces it instead of the
+                        // user wondering why STT never comes online.
+                        await self?.setSttDownloadState(.failed(modelId: sttModelId, message: message))
                     }
                 }
             }
@@ -494,26 +504,49 @@ final class AppState {
 
         if config.tts.enabled,
            !config.tts.acknowledgedAutoPrefetch,
+           ttsDownloadState == nil,
            !KokoroModelManager.isModelCached() {
+            let ttsModelId = KokoroModelManager.modelEntry.id
             logger.info("Silent prefetch: starting kokoro-82m download")
+            ttsDownloadState = .active(modelId: ttsModelId, percent: 0)
             Task.detached(priority: .background) { [weak self] in
                 let stream = KokoroModelManager.startModelDownload()
                 for await progress in stream {
                     switch progress {
+                    case let .progress(downloaded, total):
+                        let percent = total > 0 ? Int(Double(downloaded) / Double(total) * 100) / 10 * 10 : 0
+                        await self?.setTtsDownloadState(.active(modelId: ttsModelId, percent: percent))
                     case .complete:
                         logger.info("Silent prefetch: kokoro-82m completed")
                         // Reconstruct so the freshly downloaded model is picked
                         // up now, mirroring the STT prefetch path.
                         await self?.reconstructTtsService()
                         await self?.acknowledgeTtsPrefetch()
+                        await self?.setTtsDownloadState(nil)
                     case let .error(message):
                         logger.error("Silent prefetch: kokoro-82m failed: \(message, privacy: .public)")
-                    case .progress:
-                        break
+                        // See the STT branch above: leave `.failed` in place
+                        // so Settings surfaces the failure instead of it
+                        // being silently swallowed.
+                        await self?.setTtsDownloadState(.failed(modelId: ttsModelId, message: message))
                     }
                 }
             }
         }
+    }
+
+    /// Sets `sttDownloadState` from a non-isolated context (the detached
+    /// prefetch task). A plain `await self?.foo` call cannot assign a
+    /// property directly, so this small isolated setter exists purely to
+    /// give the detached task a `@MainActor` hop.
+    private func setSttDownloadState(_ state: DownloadState?) {
+        sttDownloadState = state
+    }
+
+    /// Sets `ttsDownloadState` from a non-isolated context. See
+    /// `setSttDownloadState`.
+    private func setTtsDownloadState(_ state: DownloadState?) {
+        ttsDownloadState = state
     }
 
     /// Marks the STT auto-prefetch as acknowledged, bumps the UI cache

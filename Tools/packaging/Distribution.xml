@@ -14,6 +14,8 @@
         <line choice="app"/>
         <line choice="model_e2b"/>
         <line choice="model_e4b"/>
+        <line choice="model_whisper"/>
+        <line choice="model_kokoro"/>
     </choices-outline>
 
     <choice id="app"
@@ -47,7 +49,32 @@
         <pkg-ref id="com.aws.fastlang.model_e4b"/>
     </choice>
 
+    <!-- Required, non-optional: the app downloads these unconditionally on
+         first launch (AppState.prefetchSmallModelsIfNeeded()) regardless of
+         installer state. Listed here only so their size is disclosed on the
+         Customize screen; start_enabled="false" keeps them checked and
+         un-clickable, matching the "app" choice above. -->
+    <choice id="model_whisper"
+            title="Whisper Small (speech-to-text, ~455 MB)"
+            description="Required. Powers push-to-talk speech-to-text. Downloads automatically on first launch."
+            start_selected="true"
+            start_enabled="false"
+            visible="true">
+        <pkg-ref id="com.aws.fastlang.model_whisper"/>
+    </choice>
+
+    <choice id="model_kokoro"
+            title="Kokoro 82M (read aloud, ~310 MB)"
+            description="Required. Powers the on-device neural voice for read aloud. Downloads automatically on first launch."
+            start_selected="true"
+            start_enabled="false"
+            visible="true">
+        <pkg-ref id="com.aws.fastlang.model_kokoro"/>
+    </choice>
+
     <pkg-ref id="com.aws.fastlang.app" version="0">app.pkg</pkg-ref>
-    <pkg-ref id="com.aws.fastlang.model_e2b" version="0">model_e2b.pkg</pkg-ref>
-    <pkg-ref id="com.aws.fastlang.model_e4b" version="0">model_e4b.pkg</pkg-ref>
+    <pkg-ref id="com.aws.fastlang.model_e2b" version="0" installKBytes="3000000">model_e2b.pkg</pkg-ref>
+    <pkg-ref id="com.aws.fastlang.model_e4b" version="0" installKBytes="4800000">model_e4b.pkg</pkg-ref>
+    <pkg-ref id="com.aws.fastlang.model_whisper" version="0" installKBytes="455000">model_whisper.pkg</pkg-ref>
+    <pkg-ref id="com.aws.fastlang.model_kokoro" version="0" installKBytes="310000">model_kokoro.pkg</pkg-ref>
 </installer-gui-script>

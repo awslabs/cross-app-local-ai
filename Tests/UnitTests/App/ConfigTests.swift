@@ -68,10 +68,10 @@ struct ConfigTests {
         #expect(config.stt.whisperModelId == "whisper-small")
     }
 
-    @Test("default TTS config uses system provider")
+    @Test("default TTS config uses kokoro provider")
     func defaultTts() {
         let config = Config()
-        #expect(config.tts.provider == "system")
+        #expect(config.tts.provider == "kokoro")
         #expect(config.tts.enabled == true)
         #expect(config.tts.rate == 0.5)
         #expect(config.tts.voiceId == nil)
@@ -240,7 +240,7 @@ struct ConfigTests {
         }
         """
         let decoded = try sharedJSONDecoder.decode(Config.self, from: Data(json.utf8))
-        #expect(decoded.tts.provider == "system")
+        #expect(decoded.tts.provider == "kokoro")
         #expect(decoded.tts.enabled == true)
         #expect(decoded.tts.rate == 0.5)
         #expect(decoded.hotkeys.readAloud == "Cmd+Shift+X")

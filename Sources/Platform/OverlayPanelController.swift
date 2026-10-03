@@ -23,6 +23,24 @@ final class OverlayPanelController {
     private var spaceChangeObserver: NSObjectProtocol?
     private let onDismiss: () -> Void
 
+    /// Resolves the screen to anchor STT indicator pills to. Injectable so
+    /// tests can observe how often it's consulted without needing real
+    /// multi-monitor `NSScreen` instances.
+    private let currentScreenProvider: () -> NSScreen?
+
+    /// The screen the current STT indicator session is anchored to, captured
+    /// once when the session starts (`showSttIndicator()`/first notice) and
+    /// cleared in `hideSttIndicator()`.
+    ///
+    /// Without this, positioning re-queries `NSScreen.main` (the screen with
+    /// keyboard focus) on every pill transition. A failed injection can open
+    /// System Settings or trigger the OS Accessibility trust prompt before
+    /// the error pill renders, moving keyboard focus to a different screen
+    /// and stranding the error pill away from the recording/transcribing
+    /// pills the user was already looking at. Anchoring once per session
+    /// keeps every pill in a session on the screen where it started.
+    private var sttAnchorScreen: NSScreen?
+
     /// Creates the overlay panel controller and hosts the SwiftUI overlay inside it.
     ///
     /// - Parameters:
@@ -33,6 +51,9 @@ final class OverlayPanelController {
     ///   - onReject: Called when the user rejects generated text.
     ///   - onRefine: Called when the user requests a refinement.
     ///   - onDismiss: Called when a dismissal trigger fires (escape, space change, focus loss).
+    ///   - currentScreenProvider: Resolves the screen to anchor a new STT
+    ///     indicator session to. Defaults to `NSScreen.main`; overridable in
+    ///     tests to observe anchor behavior without real multiple monitors.
     init(
         appState: AppState,
         onSubmit: @escaping (String) -> Void,
@@ -40,11 +61,13 @@ final class OverlayPanelController {
         onAccept: @escaping () -> Void,
         onReject: @escaping () -> Void,
         onRefine: @escaping (String) -> Void,
-        onDismiss: @escaping () -> Void
+        onDismiss: @escaping () -> Void,
+        currentScreenProvider: @escaping () -> NSScreen? = { NSScreen.main }
     ) {
         self.appState = appState
         self.panel = OverlayPanel()
         self.onDismiss = onDismiss
+        self.currentScreenProvider = currentScreenProvider
 
         let containerView = OverlayContainerView(
             appState: appState,
@@ -217,9 +240,13 @@ final class OverlayPanelController {
     }
 
     /// Hides the STT indicator regardless of its current mode.
+    ///
+    /// Also clears the anchored screen so the next session re-anchors to
+    /// wherever the user is when it starts.
     func hideSttIndicator() {
         sttPanel?.orderOut(nil)
         sttPanel = nil
+        sttAnchorScreen = nil
     }
 
     /// Shows a floating STT notice — a red error or a neutral status — with a
@@ -271,7 +298,13 @@ final class OverlayPanelController {
 
         indicatorPanel.contentView = indicatorHostingView
 
-        if let screen = NSScreen.main {
+        // Anchor to the screen captured at the start of this indicator
+        // session (see `sttAnchorScreen`) rather than re-resolving the
+        // current screen on every pill transition.
+        let resolvedScreen = sttAnchorScreen ?? currentScreenProvider()
+        sttAnchorScreen = resolvedScreen
+
+        if let screen = resolvedScreen {
             let screenFrame = screen.visibleFrame
             // Anchor by the TOP edge so every pill — recording, transcribing,
             // and the taller multi-line error/info pills — appears in the same

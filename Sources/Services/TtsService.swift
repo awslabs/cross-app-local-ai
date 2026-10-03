@@ -11,7 +11,7 @@ private let logger = Logger(subsystem: "com.aws.fastlang", category: "ttsservice
 /// Separate from the `Codable` config to avoid coupling serialization to
 /// service internals.
 struct TtsServiceConfig: Equatable {
-    var provider = "system"
+    var provider = "kokoro"
     var voiceId: String?
     var rate: Float = 0.5
     var language = "en-US"
@@ -34,8 +34,8 @@ actor TtsService {
     /// - `mockMode == true` -> `FailedInitTtsProvider(.notConfigured)`
     ///   (feature disabled via Settings; synthesis calls throw the
     ///   clean error instead of silently succeeding with no audio).
+    /// - `"kokoro"` -> `KokoroTtsProvider` (default: on-device neural voice)
     /// - `"system"` -> `AVSpeechTtsProvider`
-    /// - `"kokoro"` -> `KokoroTtsProvider`
     /// - Unknown provider -> `FailedInitTtsProvider(.notConfigured)`
     ///
     /// - Parameter config: The runtime TTS configuration.

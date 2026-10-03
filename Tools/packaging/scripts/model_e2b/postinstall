@@ -6,6 +6,12 @@
 # model ID, removes the marker, and starts the in-app download.
 #
 # Marker name must match `pkgMarkerE2B` in Sources/App/Storage.swift.
+#
+# FastLang.app is sandboxed (com.apple.security.app-sandbox), so its own
+# FileManager calls for .applicationSupportDirectory are redirected by the
+# OS to the sandbox container, not the real home directory. This script
+# runs unsandboxed as root, so it must write directly to the container
+# path the app will actually see.
 
 set -u
 
@@ -27,7 +33,7 @@ if [ -z "${USER_HOME}" ] || [ ! -d "${USER_HOME}" ]; then
     exit 0
 fi
 
-DATA_DIR="${USER_HOME}/Library/Application Support/com.aws.fastlang"
+DATA_DIR="${USER_HOME}/Library/Containers/com.aws.fastlang/Data/Library/Application Support/com.aws.fastlang"
 sudo -u "${CONSOLE_USER}" /bin/mkdir -p "${DATA_DIR}"
 # Only one marker should exist — clear the counterpart first.
 sudo -u "${CONSOLE_USER}" /bin/rm -f "${DATA_DIR}/${COUNTERPART}"

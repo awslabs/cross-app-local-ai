@@ -1,0 +1,11 @@
+#!/bin/bash
+# Postinstall for the Kokoro 82M model choice.
+#
+# No-op by design. This component exists purely so Distribution.xml's
+# installKBytes can disclose Kokoro 82M's size on the Customize screen;
+# the choice is mandatory (start_enabled="false") and carries no payload.
+#
+# The app downloads Kokoro 82M unconditionally on first launch via
+# AppState.prefetchSmallModelsIfNeeded(), independent of installer state.
+
+exit 0

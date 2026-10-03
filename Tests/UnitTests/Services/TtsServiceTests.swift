@@ -24,6 +24,15 @@ struct TtsServiceTests {
         }
     }
 
+    @Test("default provider creates KokoroTtsProvider")
+    func defaultProviderCreatesKokoro() async {
+        let config = TtsServiceConfig()
+        let service = TtsService(config: config)
+
+        let name = await service.providerName
+        #expect(name == "Kokoro (Neural)")
+    }
+
     @Test("system provider creates AVSpeechTtsProvider")
     func systemProviderCreatesAVSpeech() async {
         let config = TtsServiceConfig(provider: "system", mockMode: false)
