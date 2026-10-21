@@ -10,8 +10,8 @@ import Foundation
 /// reason: macOS App Sandbox blocks the sandboxed main app from
 /// exec'ing third-party binaries — whatever `credential_process`
 /// command the user has configured in `~/.aws/config` (this is a
-/// standard AWS mechanism; Amazon's internal `isengardcli` is one
-/// example, not a requirement) — but the user's AWS credentials
+/// standard AWS mechanism; a corporate SSO tool is one example, not a
+/// requirement) — but the user's AWS credentials
 /// require that binary to produce fresh tokens. The helper performs
 /// that subprocess execution on the main app's behalf and returns the
 /// JSON result over XPC.
@@ -34,24 +34,29 @@ import Foundation
 public protocol BedrockHelperProtocol {
     /// Returns `true` immediately. Used by the main app to verify the
     /// XPC service binary is launchable before any real auth call.
-    func ping(reply: @escaping (Bool) -> Void)
+    func ping(reply: @escaping @Sendable (Bool) -> Void)
 
-    /// Fetches AWS credentials for the named profile by executing the
-    /// profile's `credential_process` directive from `~/.aws/config`.
+    /// Fetches AWS credentials for the named profile, either by running
+    /// the profile's `credential_process` directive from `~/.aws/config`
+    /// or, for profiles without one, by delegating to the AWS SDK's own
+    /// profile resolver (static keys, `source_profile`/assume-role,
+    /// `credential_source`, web identity, SSO, and Login).
     ///
     /// - Parameters:
     ///   - profile: The AWS profile name (without the `profile ` prefix
     ///     used by the config file). Pass `"default"` for the default
     ///     profile.
-    ///   - reply: Called on completion. Exactly one of the two
-    ///     parameters is non-nil:
-    ///     - `credentialsJSON` carries the credential_process stdout
-    ///       (JSON shape `{AccessKeyId, SecretAccessKey, SessionToken,
+    ///   - reply: Called on completion, possibly on a different thread
+    ///     than the call was made on since credential resolution may
+    ///     involve a subprocess or an async network call. Exactly one
+    ///     of the two parameters is non-nil:
+    ///     - `credentialsJSON` carries the resolved credentials (JSON
+    ///       shape `{AccessKeyId, SecretAccessKey, SessionToken,
     ///       Expiration}`).
     ///     - `errorMessage` carries a human-readable failure reason
     ///       suitable for surfacing in the UI.
     func fetchCredentials(
         profile: String,
-        reply: @escaping (_ credentialsJSON: Data?, _ errorMessage: String?) -> Void
+        reply: @escaping @Sendable (_ credentialsJSON: Data?, _ errorMessage: String?) -> Void
     )
 }

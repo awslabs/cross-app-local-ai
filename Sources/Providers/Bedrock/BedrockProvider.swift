@@ -13,15 +13,23 @@
 
     /// Available Bedrock model IDs using cross-region inference format.
     enum BedrockModels {
+        static let claudeOpus55 = "us.anthropic.claude-opus-5-5"
+        static let claudeOpus5 = "us.anthropic.claude-opus-5"
+        static let claudeOpus48 = "us.anthropic.claude-opus-4-8"
+        static let claudeSonnet55 = "us.anthropic.claude-sonnet-5-5"
         static let claudeSonnet5 = "us.anthropic.claude-sonnet-5"
         static let claudeSonnet46 = "us.anthropic.claude-sonnet-4-6"
         static let claudeSonnet45 = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
         static let claudeSonnet4 = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        static let claudeHaiku55 = "us.anthropic.claude-haiku-5-5"
         static let claudeHaiku45 = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
         static let amazonNovaPremier = "us.amazon.nova-premier-v1:0"
+        static let amazonNovaPro = "us.amazon.nova-pro-v1:0"
         static let amazonNova2Lite = "us.amazon.nova-2-lite-v1:0"
+        static let amazonNovaLite = "us.amazon.nova-lite-v1:0"
+        static let amazonNovaMicro = "us.amazon.nova-micro-v1:0"
 
-        static let defaultModelId = claudeSonnet5
+        static let defaultModelId = claudeSonnet55
 
         static func supportsTemperature(_ modelId: String) -> Bool {
             !modelId.contains("claude-sonnet-5")
@@ -140,10 +148,10 @@
     /// `BedrockCredentialHelper` XPC service, which runs outside App
     /// Sandbox and is the only piece allowed to exec the user's
     /// `credential_process` directive — whatever command the user has
-    /// configured in `~/.aws/config` (a corporate SSO tool like
-    /// Amazon's internal `isengardcli` is one example, not a
-    /// requirement; any `credential_process`-compatible binary works).
-    /// The SDK consults a caching, self-refreshing resolver on each
+    /// configured in `~/.aws/config` (a corporate SSO tool is one
+    /// common example, not a requirement; any
+    /// `credential_process`-compatible binary works). The SDK
+    /// consults a caching, self-refreshing resolver on each
     /// request, so expired tokens are picked up automatically without
     /// any user intervention.
     final class BedrockProvider: LlmProvider, @unchecked Sendable {
@@ -162,7 +170,10 @@
         /// or is missing.
         private let credentialResolver: RefreshingBedrockCredentialResolver
 
-        init(config: BedrockProviderConfig) async throws {
+        init(
+            config: BedrockProviderConfig,
+            authHook: (any InteractiveAuthHook)? = nil
+        ) async throws {
             self.config = config
 
             let profileName: String = {
@@ -174,13 +185,12 @@
 
             logger.info("Configuring Bedrock with profile '\(profileName)' in \(config.region)")
 
-            let resolver = RefreshingBedrockCredentialResolver(profile: profileName)
+            let resolver = RefreshingBedrockCredentialResolver(profile: profileName, authHook: authHook)
             self.credentialResolver = resolver
 
             // Pre-flight: validate the resolver can produce credentials
             // before we hand it to the SDK. This surfaces credential
-            // errors (e.g. an expired corporate SSO session — "run
-            // mwinit" is Amazon's internal example of this — or a
+            // errors (e.g. an expired corporate SSO session, or a
             // missing helper) at provider construction time, where the
             // UI can present a clean message, instead of at the first
             // streaming call.
@@ -355,13 +365,21 @@
 
         static func staticModels() -> [ModelInfo] {
             [
-                ModelInfo(id: BedrockModels.claudeSonnet5, displayName: "Claude Sonnet 5 (Default)"),
+                ModelInfo(id: BedrockModels.claudeSonnet55, displayName: "Claude Sonnet 5.5 (Default)"),
+                ModelInfo(id: BedrockModels.claudeOpus55, displayName: "Claude Opus 5.5"),
+                ModelInfo(id: BedrockModels.claudeOpus5, displayName: "Claude Opus 5"),
+                ModelInfo(id: BedrockModels.claudeOpus48, displayName: "Claude Opus 4.8"),
+                ModelInfo(id: BedrockModels.claudeSonnet5, displayName: "Claude Sonnet 5"),
                 ModelInfo(id: BedrockModels.claudeSonnet46, displayName: "Claude Sonnet 4.6"),
                 ModelInfo(id: BedrockModels.claudeSonnet45, displayName: "Claude Sonnet 4.5"),
                 ModelInfo(id: BedrockModels.claudeSonnet4, displayName: "Claude Sonnet 4"),
+                ModelInfo(id: BedrockModels.claudeHaiku55, displayName: "Claude Haiku 5.5"),
                 ModelInfo(id: BedrockModels.claudeHaiku45, displayName: "Claude Haiku 4.5"),
                 ModelInfo(id: BedrockModels.amazonNovaPremier, displayName: "Amazon Nova Premier"),
+                ModelInfo(id: BedrockModels.amazonNovaPro, displayName: "Amazon Nova Pro"),
                 ModelInfo(id: BedrockModels.amazonNova2Lite, displayName: "Amazon Nova 2 Lite"),
+                ModelInfo(id: BedrockModels.amazonNovaLite, displayName: "Amazon Nova Lite"),
+                ModelInfo(id: BedrockModels.amazonNovaMicro, displayName: "Amazon Nova Micro"),
             ]
         }
 
@@ -451,13 +469,30 @@
         /// (Task is a value type, so we can't compare with `===`).
         private var inflightGeneration: UInt64 = 0
 
-        init(profile: String) {
+        init(profile: String, authHook: (any InteractiveAuthHook)? = nil) {
             let connection = NSXPCConnection(
                 serviceName: "com.aws.fastlang.bedrock-credential-helper"
             )
             connection.remoteObjectInterface = NSXPCInterface(
                 with: BedrockHelperProtocol.self
             )
+            #if INTERNAL_INTERACTIVE_AUTH_ENABLED
+                // Mirror image of `main.swift`'s `ServiceDelegate`: export this
+                // delegate on the same connection so the (unsandboxed) helper
+                // can call back into the main app's UI while an interactive
+                // `mwinit -f` re-authentication is in flight. `authHook` is
+                // the generic, always-present marker type (see
+                // `InteractiveAuthHook` in `LlmService.swift`); downcast to
+                // the real Internal-only protocol here, the one place that
+                // needs it. `nil` when the flag is on but no coordinator was
+                // supplied (e.g. tests), or when the downcast fails.
+                if let mwinitAuthDelegate = authHook as? any MwinitAuthProgressDelegate {
+                    connection.exportedInterface = NSXPCInterface(
+                        with: MwinitAuthProgressDelegate.self
+                    )
+                    connection.exportedObject = mwinitAuthDelegate
+                }
+            #endif
             connection.resume()
             self.xpcConnection = connection
             self.profileName = profile

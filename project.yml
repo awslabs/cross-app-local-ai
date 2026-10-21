@@ -7,6 +7,15 @@ options:
   createIntermediateGroups: true
   generateEmptyDirectories: true
   groupSortPosition: top
+# Project-level Debug signing entry point. Declared here (not per-target) so
+# every target in the project — FastLang, UnitTests, IntegrationTests, and
+# BedrockCredentialHelperCore — resolves the same Local.xcconfig, and
+# therefore the same optional Local.private.xcconfig / Local.internal.xcconfig
+# includes. XcodeGen resolves build settings in this precedence order: target
+# settings, target xcconfig, project settings, project xcconfig — so a target
+# can still override anything here without needing its own configFiles entry.
+configFiles:
+  Debug: Local.xcconfig
 
 packages:
   Stencil:
@@ -74,15 +83,15 @@ targets:
         excludes:
           # The XPC helper compiles into its own target below.
           - "XPCServices/**"
+          # Helper-only interactive re-auth launcher; FastLang only needs
+          # the shared protocol and app-side coordinator (both still swept
+          # in from Internal/Mwinit/{Shared,App} by this same Sources entry).
+          - "Internal/Mwinit/Helper/**"
       - path: Views
-    # Debug signing entry point. Local.xcconfig is tracked (so this reference
-    # always validates, including on CI) and optionally includes a gitignored
-    # per-developer Local.private.xcconfig for a stable Apple Development
-    # identity, so macOS TCC grants survive rebuilds. Release signing is
-    # handled by Tools/packaging and is unaffected. Target build settings
-    # below still win over this base xcconfig; it only supplies signing keys.
-    configFiles:
-      Debug: Local.xcconfig
+    # Debug signing/feature-flag entry point is inherited from the
+    # project-level configFiles (see top of file) so it's shared with
+    # UnitTests, IntegrationTests, and BedrockCredentialHelperCore. Target
+    # build settings below still win over that base xcconfig.
     settings:
       base:
         INFOPLIST_FILE: FastLang/Info.plist
@@ -94,7 +103,7 @@ targets:
         # make the module "FastLang_Dev", breaking `@testable import FastLang`
         # in the test targets and changing type names in logs.
         PRODUCT_MODULE_NAME: FastLang
-        MARKETING_VERSION: "0.8.0"
+        MARKETING_VERSION: "0.9.1"
         CURRENT_PROJECT_VERSION: 1
         SWIFT_VERSION: "6.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
@@ -115,7 +124,14 @@ targets:
         TELEMETRY_API_TOKEN: "$(TELEMETRY_API_TOKEN)"
       configs:
         Debug:
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG BEDROCK_ENABLED"
+          # INTERNAL_INTERACTIVE_AUTH_CONDITION is undefined (resolves to
+          # empty) everywhere except a developer machine with a local
+          # Local.internal.xcconfig (see Local.xcconfig), mirroring how
+          # TELEMETRY_API_DOMAIN/TOKEN above stay empty outside CI. Debug-only
+          # and deliberately never wired into Release: this gates an
+          # internal-only, local-developer feature that must never ship in a
+          # distributed build, let alone the OSS export (see .oss-exclude).
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG BEDROCK_ENABLED $(INTERNAL_INTERACTIVE_AUTH_CONDITION)"
           # Debug builds get a distinct app identity (FastLang-Dev.app /
           # com.aws.fastlang.dev) so macOS Accessibility/TCC permission grants
           # attach to a dedicated dev identity — they persist across rebuilds
@@ -162,24 +178,79 @@ targets:
         TelemetryAPIDomain: "$(TELEMETRY_API_DOMAIN)"
         TelemetryAPIToken: "$(TELEMETRY_API_TOKEN)"
 
-  # Non-sandboxed XPC service that performs credential_process exec on
-  # behalf of the sandboxed main app. The whole reason this exists is
-  # that macOS App Sandbox blocks the main app from exec'ing the user's
-  # configured credential_process binary (a standard AWS mechanism;
-  # Amazon's internal isengardcli is one example, not a requirement);
-  # we delegate that to a separate process without sandbox restrictions.
-  BedrockCredentialHelper:
-    type: xpc-service
+  # Dynamic framework holding the actual credential-resolution logic
+  # (HelperService) plus the shared @objc XPC protocol. Split out of the
+  # xpc-service target below so UnitTests can link it directly — an
+  # xpc-service product is a standalone executable, and test bundles can
+  # only resolve symbols against their TEST_HOST app binary, never
+  # against a sibling executable. A framework links into both the
+  # xpc-service and UnitTests normally, with no bundle_loader involved.
+  # Must be `framework`, not `library.static`: aws-sdk-swift's AWSSDKIdentity
+  # transitively depends on aws-crt-swift's C-target modules (AwsCAuth,
+  # AwsCCommon, etc.), and Xcode's static-library product type does not
+  # propagate those Clang module maps to dependents the way an executable
+  # or framework does ("unable to resolve module dependency" at link time).
+  BedrockCredentialHelperCore:
+    type: framework
     platform: macOS
     sources:
       - path: Sources/XPCServices/BedrockCredentialHelper
         excludes:
           - "Info.plist"
           - "*.entitlements"
+          - "main.swift"
       # Shared @objc protocol — the same file is compiled into both
-      # targets so NSXPCConnection can resolve the type in both
-      # processes.
+      # this target and FastLang so NSXPCConnection can resolve the
+      # type in both processes.
       - path: Sources/Providers/Bedrock/BedrockHelperProtocol.swift
+      # Interactive re-auth protocol and pty launcher. `optional:
+      # true` disables XcodeGen's missing-path check: these two
+      # directories are physically absent from the OSS export (see
+      # .oss-exclude), and `xcodegen generate` must still succeed there.
+      - path: Sources/Internal/Mwinit/Shared
+        optional: true
+      - path: Sources/Internal/Mwinit/Helper
+        optional: true
+    settings:
+      base:
+        PRODUCT_NAME: BedrockCredentialHelperCore
+        PRODUCT_MODULE_NAME: BedrockCredentialHelperCore
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SKIP_INSTALL: "YES"
+        DEFINES_MODULE: "YES"
+      configs:
+        Debug:
+          # INTERNAL_INTERACTIVE_AUTH_CONDITION resolves from the
+          # project-level Local.xcconfig (see top of file), same indirection
+          # as the FastLang target. This is the framework that will host the
+          # interactive re-auth launcher, so it needs the flag too.
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG $(INTERNAL_INTERACTIVE_AUTH_CONDITION)"
+    dependencies:
+      # Delegates static-key, source_profile/assume-role, credential_source,
+      # web-identity, SSO, and Login profile resolution to the SDK's own
+      # ProfileAWSCredentialIdentityResolver (see HelperService.fetchCredentials
+      # Path 2). credential_process profiles still go through our own
+      # hardened exec path so the exit-code hints are preserved.
+      - package: aws-sdk-swift
+        product: AWSSDKIdentity
+
+  # Non-sandboxed XPC service that performs credential_process exec on
+  # behalf of the sandboxed main app. The whole reason this exists is
+  # that macOS App Sandbox blocks the main app from exec'ing the user's
+  # configured credential_process binary (a standard AWS mechanism; a
+  # corporate SSO tool is one example, not a requirement); we delegate
+  # that to a separate process without sandbox restrictions.
+  # The actual logic lives in BedrockCredentialHelperCore above; this
+  # target is just the thin NSXPCListener entry point.
+  BedrockCredentialHelper:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - path: Sources/XPCServices/BedrockCredentialHelper
+        includes:
+          - "main.swift"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.aws.fastlang.bedrock-credential-helper
@@ -190,6 +261,22 @@ targets:
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         SWIFT_STRICT_CONCURRENCY: complete
         SKIP_INSTALL: "YES"
+      configs:
+        Debug:
+          # main.swift's ServiceDelegate branches on
+          # INTERNAL_INTERACTIVE_AUTH_ENABLED to wire the reverse-direction
+          # interactive re-auth delegate interface. Without this, the flag
+          # being on everywhere else in the project would silently have
+          # no effect here, since each target's compilation conditions
+          # are independent — unlike BedrockCredentialHelperCore, this
+          # xpc-service target had no Debug config override at all.
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(INTERNAL_INTERACTIVE_AUTH_CONDITION)"
+    dependencies:
+      # Dynamic framework must be embedded in the .xpc bundle's own
+      # Contents/Frameworks so the standalone xpc-service process can
+      # load it at launch (it has no host app to inherit frameworks from).
+      - target: BedrockCredentialHelperCore
+        embed: true
 
   UnitTests:
     type: bundle.unit-test
@@ -209,7 +296,9 @@ targets:
         SWIFT_OBJC_INTEROP_MODE: objcxx
       configs:
         Debug:
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG BEDROCK_ENABLED"
+          # Must match the FastLang target's Debug condition exactly, so
+          # @testable import FastLang sees the same compiled surface area.
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG BEDROCK_ENABLED $(INTERNAL_INTERACTIVE_AUTH_CONDITION)"
           # Debug renames the product to "FastLang-Dev", so the auto-derived
           # TEST_HOST (FastLang.app, from the target/product name) is wrong for
           # this config. Set it explicitly in both configs. BUNDLE_LOADER
@@ -220,6 +309,13 @@ targets:
           TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FastLang.app/Contents/MacOS/FastLang"
     dependencies:
       - target: FastLang
+      # So HelperServiceTests.swift can `@testable import BedrockCredentialHelperCore`.
+      # Must be the Core framework target, not the xpc-service itself: an
+      # xpc-service is a standalone executable, and this test bundle can
+      # only resolve symbols against its TEST_HOST app binary — a dynamic
+      # framework embeds and links directly into the test bundle instead.
+      - target: BedrockCredentialHelperCore
+        embed: true
 
   IntegrationTests:
     type: bundle.unit-test
@@ -236,7 +332,7 @@ targets:
         SWIFT_OBJC_INTEROP_MODE: objcxx
       configs:
         Debug:
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG BEDROCK_ENABLED"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG BEDROCK_ENABLED $(INTERNAL_INTERACTIVE_AUTH_CONDITION)"
           # See UnitTests above: products are FastLang-Dev.app / FastLang.app.
           TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FastLang-Dev.app/Contents/MacOS/FastLang-Dev"
         Release:

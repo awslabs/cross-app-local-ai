@@ -6,9 +6,9 @@
 	  The Bedrock credential helper runs WITHOUT App Sandbox. This is
 	  intentional and is the only reason this XPC service exists: the
 	  sandboxed main app cannot exec the user's configured
-	  credential_process binary (a standard AWS mechanism; Amazon's
-	  internal isengardcli is one example, not a requirement), so we
-	  delegate that exec to a separate, unsandboxed process. The threat
+	  credential_process binary (a standard AWS mechanism; a corporate
+	  SSO tool is one example, not a requirement), so we delegate that
+	  exec to a separate, unsandboxed process. The threat
 	  model relaxes M8 for this single binary; the main app's sandbox
 	  remains intact.
 

@@ -3,6 +3,22 @@ import OSLog
 
 private let logger = Logger(subsystem: "com.aws.fastlang", category: "llmservice")
 
+// MARK: - InteractiveAuthHook
+
+/// Marker for an optional, provider-specific interactive re-authentication
+/// callback object.
+///
+/// This type carries no behavior itself and is always compiled. It exists
+/// solely so `LlmService`/`BedrockProvider` initializers have a stable,
+/// `#if`-free parameter: Swift does not support conditional compilation
+/// inside a parameter list, so threading an Internal-only delegate type
+/// through these call sites requires a type that is visible in every
+/// build. Internal builds with `INTERNAL_INTERACTIVE_AUTH_ENABLED` pass a
+/// value that also conforms to the Internal-only interactive re-auth
+/// delegate protocol and downcast to that protocol at the one point that
+/// needs it; every other build passes `nil`.
+protocol InteractiveAuthHook: AnyObject, Sendable {}
+
 // MARK: - LlmServiceConfig
 
 /// Runtime configuration for the LLM service.
@@ -52,10 +68,18 @@ actor LlmService {
     /// - Unknown provider -> `FailedInitLlmProvider` throwing
     ///   `LlmError.unknownProvider`
     ///
-    /// - Parameter config: The runtime LLM configuration.
-    init(config: LlmServiceConfig) async {
+    /// - Parameters:
+    ///   - config: The runtime LLM configuration.
+    ///   - authHook: Forwarded to `BedrockProvider`, which exports it on the
+    ///     credential helper's XPC connection when it conforms to the
+    ///     Internal-only interactive re-auth delegate protocol. Always
+    ///     present (rather than `#if`-gated) because Swift does not support
+    ///     conditional compilation inside a parameter list; this keeps the
+    ///     signature identical in every build. `nil` for any other
+    ///     provider, or when `INTERNAL_INTERACTIVE_AUTH_ENABLED` is off.
+    init(config: LlmServiceConfig, authHook: (any InteractiveAuthHook)? = nil) async {
         self.config = config
-        let created = await Self.createProvider(for: config)
+        let created = await Self.createProvider(for: config, authHook: authHook)
         self.provider = created
         logger.info("LlmService initialized with provider: \(created.providerName)")
     }
@@ -165,7 +189,10 @@ actor LlmService {
 
     // MARK: - Provider Construction
 
-    private static func createProvider(for config: LlmServiceConfig) async -> any LlmProvider {
+    private static func createProvider(
+        for config: LlmServiceConfig,
+        authHook: (any InteractiveAuthHook)? = nil
+    ) async -> any LlmProvider {
         if config.mockMode {
             logger.debug("Using MockLlmProvider (mock mode)")
             return MockLlmProvider()
@@ -219,7 +246,7 @@ actor LlmService {
                         maxTokens: UInt32(config.maxTokens),
                         temperature: config.temperature
                     )
-                    return try await BedrockProvider(config: bedrockConfig)
+                    return try await BedrockProvider(config: bedrockConfig, authHook: authHook)
                 } catch {
                     logger
                         .error(

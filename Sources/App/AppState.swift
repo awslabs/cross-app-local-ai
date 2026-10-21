@@ -188,6 +188,29 @@ final class AppState {
     let dirs: AppDirs
     var sleepWakeObserver: SleepWakeObserver?
 
+    #if INTERNAL_INTERACTIVE_AUTH_ENABLED
+        /// Drives the interactive mwinit PIN/touch dialog when the Bedrock
+        /// credential helper detects an expired corporate SSO session.
+        /// Threaded into `LlmService`/`BedrockProvider` as the XPC-exported
+        /// `MwinitAuthProgressDelegate`. Has a property-level default so
+        /// neither initializer below needs to assign it explicitly.
+        let mwinitAuthCoordinator = MwinitAuthCoordinator()
+    #endif
+
+    /// Hook passed to `LlmService` for an optional interactive
+    /// re-authentication callback. Always present (not `#if`-gated)
+    /// because `LlmService.init`'s `authHook` parameter is unconditional —
+    /// Swift does not support conditional compilation inside a parameter
+    /// list. Resolves to `mwinitAuthCoordinator` only when
+    /// `INTERNAL_INTERACTIVE_AUTH_ENABLED` is set; `nil` otherwise.
+    var mwinitAuthHook: (any InteractiveAuthHook)? {
+        #if INTERNAL_INTERACTIVE_AUTH_ENABLED
+            mwinitAuthCoordinator
+        #else
+            nil
+        #endif
+    }
+
     /// Whether services are currently suspended due to system sleep.
     /// Prevents wake-reconstruction from racing with a user-triggered
     /// `reconstructLlmService` call. Set only by `suspendForSleep()` and
@@ -297,7 +320,7 @@ final class AppState {
         // PTT) behind the LLM load — which can be a multi-GB local model.
         let llmConfig = buildLlmServiceConfig()
         let sttConfig = buildSttServiceConfig()
-        async let llmServiceTask = LlmService(config: llmConfig)
+        async let llmServiceTask = LlmService(config: llmConfig, authHook: mwinitAuthHook)
         async let sttServiceTask = SttService(config: sttConfig)
 
         let llm = await llmServiceTask
@@ -764,90 +787,4 @@ final class AppState {
         }
     }
 
-    // MARK: - Reset
-
-    /// Resets session-scoped state. Called when overlay hides.
-    func resetSessionState() {
-        promptText = ""
-        selectedText = nil
-        generatedText = ""
-        isGenerating = false
-        isRefining = false
-        errorMessage = nil
-        errorSuggestedAction = nil
-        overlayState = .input
-        sessionOriginalPrompt = ""
-        sessionOriginalResponse = ""
-        sessionRefinements = []
-        previousGeneratedText = ""
-        originalApp = nil
-        contextType = .generic
-        originalClipboard = nil
-        capturedViaClipboard = false
-        promptMode = .insert
-        explainMode = false
-    }
-
-    /// Sets the text to be read aloud and resets playback so a stale
-    /// word-highlight range from the previous text can't survive the swap.
-    ///
-    /// The single choke point for updating `readAloudText`. Used both for
-    /// the initially captured selection and, later, for swapping in a
-    /// preprocessed or summarized rendition -- it intentionally leaves
-    /// `readAloudRate` untouched so a mid-session rate adjustment survives
-    /// a rendition swap.
-    ///
-    /// - Parameter text: The text to display and speak.
-    func setReadAloudText(_ text: String) {
-        readAloudTask?.cancel()
-        readAloudTask = nil
-        readAloudPlaybackState = .idle
-        readAloudHighlightRange = nil
-        readAloudText = text
-    }
-
-    /// Resets read-aloud session state.
-    func resetReadAloudState() {
-        readAloudTask?.cancel()
-        readAloudTask = nil
-        readAloudPreprocessTask?.cancel()
-        readAloudPreprocessTask = nil
-        readAloudText = nil
-        readAloudOriginalText = nil
-        readAloudRendition = .original
-        readAloudSummarizeState = .idle
-        readAloudHighlightRange = nil
-        readAloudPlaybackState = .idle
-        readAloudErrorMessage = nil
-        isReadAloudVisible = false
-    }
-
-    /// Full reset including services. Used for error recovery.
-    func reset() {
-        isOverlayVisible = false
-        isRecording = false
-        resetSessionState()
-        resetReadAloudState()
-        Task {
-            // resetReadAloudState() cancels the read-aloud task and clears the
-            // UI, but it does not stop the audio engine or finish the playback
-            // stream. Explicitly stop TTS so audio doesn't keep playing after
-            // an error-recovery reset and the session continuation isn't leaked.
-            await ttsService?.stop()
-            await agent.forceReset()
-        }
-    }
-
-    // MARK: - Alert Presentation
-
-    /// Shows a native macOS alert dialog with a title and body message.
-    ///
-    /// - Parameters:
-    ///   - title: Short heading for the alert (e.g. "Speech Recognition").
-    ///   - body: Descriptive message explaining the issue and any suggested action.
-    func presentAlert(title: String, body: String) {
-        alertTitle = title
-        alertBody = body
-        isAlertPresented = true
-    }
 }

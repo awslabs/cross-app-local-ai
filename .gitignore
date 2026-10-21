@@ -18,6 +18,10 @@ xcuserdata/
 # optionally includes this gitignored file). See Local.xcconfig.
 Local.private.xcconfig
 
+# Per-developer local Debug feature-flag overrides (Local.xcconfig is tracked
+# and optionally includes this gitignored file). See Local.xcconfig.
+Local.internal.xcconfig
+
 # macOS
 .DS_Store
 ._*

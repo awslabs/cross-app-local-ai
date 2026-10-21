@@ -21,3 +21,10 @@
 // Tools/packaging and are unaffected. If the private file is absent (e.g. on
 // CI), the optional include below is a no-op and the ad-hoc default stands.
 #include? "Local.private.xcconfig"
+
+// Per-developer Debug-only feature flag overrides, same pattern as the
+// signing override above: gitignored and OSS-excluded, so this is a no-op
+// everywhere except a developer machine that has deliberately created the
+// file. See project.yml's INTERNAL_INTERACTIVE_AUTH_CONDITION build setting
+// for the single flag this currently exists to set.
+#include? "Local.internal.xcconfig"

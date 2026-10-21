@@ -321,9 +321,9 @@
             #expect(!models.isEmpty)
         }
 
-        @Test("default model is Claude Sonnet 5")
-        func defaultModelIsSonnet5() {
-            #expect(BedrockModels.defaultModelId == BedrockModels.claudeSonnet5)
+        @Test("default model is Claude Sonnet 5.5")
+        func defaultModelIsSonnet55() {
+            #expect(BedrockModels.defaultModelId == BedrockModels.claudeSonnet55)
         }
 
         @Test("all model IDs use cross-region format")

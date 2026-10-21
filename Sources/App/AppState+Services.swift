@@ -626,7 +626,7 @@ extension AppState {
     /// Reconstructs just the LLM service from current config.
     func reconstructLlmService() async {
         let llmConfig = buildLlmServiceConfig()
-        let newLlm = await LlmService(config: llmConfig)
+        let newLlm = await LlmService(config: llmConfig, authHook: mwinitAuthHook)
         self.llmService = newLlm
         self.activeLlmConfig = llmConfig
         let name = await newLlm.providerName

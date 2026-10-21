@@ -1,5 +1,25 @@
+import Foundation
 import Testing
 @testable import FastLang
+
+/// Builds an `AppState` rooted at a scratch `AppDirs` with a fresh default
+/// `Config()`, instead of the production `init()`'s real
+/// `~/Library/Application Support/com.aws.fastlang/settings.json`. Tests that
+/// assert on default config values must not depend on whatever the developer
+/// has persisted to disk from actually running the app.
+@MainActor
+private func makeDefaultTestAppState() -> AppState {
+    let dirs = AppDirs.withRoot(URL(fileURLWithPath: "/tmp/qg-appstate-tests"))
+    return AppState(
+        config: Config(),
+        dirs: dirs,
+        platformService: MacPlatformService(),
+        audioRecorder: AudioRecorder(),
+        agent: BackgroundAgent(),
+        appResolver: AppResolver(mappings: AppMappingsData.defaultMappings),
+        promptStore: nil
+    )
+}
 
 @Suite("AppState")
 @MainActor
@@ -111,7 +131,7 @@ struct AppStateTests {
 
     @Test("default config loads with expected values")
     func defaultConfig() {
-        let state = AppState()
+        let state = makeDefaultTestAppState()
         #expect(state.config.llm.defaultProvider == "local_llamacpp")
         #expect(state.config.hotkeys.triggerOverlay == "Option+Space")
         #expect(state.config.hotkeys.pushToTalk == "Cmd+Shift+Z")

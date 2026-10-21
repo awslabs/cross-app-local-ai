@@ -4,16 +4,22 @@ This document describes accepted risks in FastLang's design and the mitigations 
 
 ## AWS `credential_process` / XPC Isolation
 
-The Bedrock provider requires executing the user's `credential_process` directive from `~/.aws/config` to obtain short-lived AWS credentials. Because the main app runs inside App Sandbox and cannot shell out, this is delegated to a dedicated XPC service (`BedrockCredentialHelper`) that runs **outside** the sandbox.
+The Bedrock provider resolves AWS credentials from the user's `~/.aws/config` and `~/.aws/credentials` via one of two paths, both run outside App Sandbox in a dedicated XPC service (`BedrockCredentialHelper`) because the sandboxed main app cannot shell out:
+
+- **`credential_process` profiles** are executed through our own hardened exec path, which preserves a timeout, PATH/HOME seeding, and exit-code hints that the AWS SDK's own `credential_process` support doesn't give us (it discards stderr on failure).
+- **Everything else** — static keys, `source_profile`/assume-role chains, `credential_source` chains, web identity, SSO, and Login — is delegated in one call to the AWS SDK's own `ProfileAWSCredentialIdentityResolver`, instead of being hand-parsed.
 
 **Why this is accepted:** The alternative is removing Bedrock support entirely. The XPC boundary ensures the main app never executes arbitrary shell commands; the helper has a strict typed interface (`fetchCredentials(profile:reply:)`) and returns only credential JSON.
 
 **Mitigations:**
 
-- Ownership and permission validation on `~/.aws/config` before execution (rejects files not owned by the current user or writable by group/other, mirroring SSH's trust model).
-- 45-second timeout on the subprocess to prevent hung credential tools from blocking the app indefinitely.
+- Ownership and permission validation on both `~/.aws/config` and `~/.aws/credentials` before either path reads them (rejects files not owned by the current user or writable by group/other, mirroring SSH's trust model) — the SDK resolver reads both files directly, not just the one holding the `credential_process` directive.
+- 45-second timeout on both the `credential_process` subprocess and the SDK resolver call, so neither a hung credential tool nor a stalled STS/SSO network call can block the app indefinitely.
 - The main app's sandbox remains fully intact; only the helper binary is unsandboxed.
-- The helper does not whitelist commands (credential tooling varies too widely), matching how the AWS CLI itself trusts the file's contents.
+- The helper does not whitelist commands or profiles (credential tooling varies too widely), matching how the AWS CLI itself trusts the file's contents.
+- A known limitation: if a profile's `source_profile` chain points at a *different* profile that itself has `credential_process`, that nested step is resolved by the SDK's own un-hardened exec path, since only the top-level requested profile is inspected for `credential_process` before delegating.
+- A known limitation: the ownership/permission check resolves symlinks (`FileManager.attributesOfItem` follows them), so a symlinked `~/.aws/config` or `~/.aws/credentials` is trusted based on its resolved target's ownership and permissions rather than being rejected outright.
+- A known limitation: trust validation covers only `~/.aws/config` and `~/.aws/credentials` themselves. It does not extend to files referenced indirectly by a profile -- a `sso_session` section, a `web_identity_token_file` path, or cached SSO tokens under `~/.aws/sso/cache/` -- which the SDK resolver reads without an equivalent ownership/permission check.
 
 ## SPM Supply Chain
 

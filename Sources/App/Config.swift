@@ -166,7 +166,7 @@ struct LlmConfig: Codable, Equatable {
     /// Default mirrors `BedrockModels.defaultModelId`. Held as a literal to
     /// avoid coupling `Config` to the `BEDROCK_ENABLED`-gated provider type;
     /// `ConfigTests` asserts the two stay in sync.
-    var bedrockModelId = "us.anthropic.claude-sonnet-5"
+    var bedrockModelId = "us.anthropic.claude-sonnet-5-5"
 
     /// The model id for the currently selected provider. Always non-empty
     /// for a default config; both per-provider fields carry their own default.
@@ -196,7 +196,7 @@ struct LlmConfig: Codable, Equatable {
         localGpuLayers = try c.decodeIfPresent(UInt32.self, forKey: .localGpuLayers) ?? 999
         localContextSize = try c.decodeIfPresent(UInt32.self, forKey: .localContextSize) ?? 4096
         bedrockModelId = try c.decodeIfPresent(String.self, forKey: .bedrockModelId)
-            ?? "us.anthropic.claude-sonnet-5"
+            ?? "us.anthropic.claude-sonnet-5-5"
     }
 }
 
