@@ -24,13 +24,16 @@ test: generate
 open: generate
 	open $(PROJECT)
 
-## Build a Release .app (no signing, no .pkg installer)
-release: generate
-	Tools/packaging/build_pkg.sh --build-only
+SIGN ?=
+SIGN_FLAG := $(if $(filter local,$(SIGN)),--sign-local,$(if $(filter ci,$(SIGN)),--sign,))
 
-## Build unsigned .pkg installer (uninstalls previous, opens installer)
+## Build a Release .app (usage: make release [SIGN=local|ci])
+release: generate
+	Tools/packaging/build_pkg.sh --build-only $(SIGN_FLAG)
+
+## Build .pkg installer; uninstalls previous, opens installer (usage: make pkg [SIGN=local|ci])
 pkg: generate
-	Tools/packaging/build_pkg.sh
+	Tools/packaging/build_pkg.sh $(SIGN_FLAG)
 
 ## Export an OSS-clean copy to DEST (usage: make export DEST=/path/to/repo)
 export:
