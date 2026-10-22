@@ -74,14 +74,6 @@ final class MacPlatformService: PlatformService, @unchecked Sendable {
             throw PlatformError.permissionDenied(permission: "Accessibility")
         }
 
-        // AXIsProcessTrusted() can return stale true after reinstall while
-        // event posting is silently blocked at the kernel level. Round-trip
-        // verification posts a sentinel event and confirms delivery via tap.
-        guard Self.verifyEventDelivery() else {
-            PermissionChecker.requestAccessibilityPermission()
-            throw PlatformError.permissionDenied(permission: "Accessibility")
-        }
-
         logger.debug("Simulating Cmd+V paste into \(target.appName) (pid \(target.processId))")
         guard Self.simulatePaste() else {
             PermissionChecker.requestAccessibilityPermission()
@@ -273,112 +265,6 @@ extension MacPlatformService {
         }
 
         return true
-    }
-
-    // MARK: Event Posting Verification
-
-    /// Sentinel value embedded in the test event's `eventSourceUserData` field
-    /// to distinguish it from real user input.
-    private static let eventDeliverySentinel: Int64 = 0x5147_454E_5445_5354
-
-    /// Verifies that CGEvent posting actually delivers events end-to-end.
-    ///
-    /// On macOS Sequoia+, `AXIsProcessTrusted()`, AX attribute reads, and even
-    /// `CGEvent.tapCreate` can all succeed with a stale TCC entry after reinstall
-    /// or code-signature change — while `CGEvent.post(tap: .cghidEventTap)`
-    /// silently drops events at the kernel level.
-    ///
-    /// This method performs a definitive round-trip test: it creates an active
-    /// event tap, posts a sentinel-marked test event, and checks whether the tap
-    /// callback actually receives it. If the kernel is dropping posted events,
-    /// the tap never fires and this returns `false`.
-    ///
-    /// The sentinel event is suppressed by the tap (never reaches any app).
-    /// Wall-clock cost is ~50ms on success; up to ~150ms if every retry misses.
-    ///
-    /// The tap source is attached to, and driven by, the *current* thread's run
-    /// loop. `injectText` runs off the main actor, so this executes on a
-    /// background thread with no suspension points — the whole probe stays on
-    /// one thread, and `CFRunLoopGetCurrent()` is stable for its duration.
-    ///
-    /// - Returns: `true` if the posted event was observed through the tap,
-    ///   proving end-to-end HID event delivery works.
-    static func verifyEventDelivery() -> Bool {
-        let received = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
-        received.initialize(to: false)
-        defer {
-            received.deinitialize(count: 1)
-            received.deallocate()
-        }
-
-        let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-        guard let tap = CGEvent.tapCreate(
-            tap: .cghidEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: eventMask,
-            callback: { _, _, event, userInfo -> Unmanaged<CGEvent>? in
-                guard let userInfo else { return Unmanaged.passUnretained(event) }
-                if event.getIntegerValueField(.eventSourceUserData) == 0x5147_454E_5445_5354 {
-                    userInfo.assumingMemoryBound(to: Bool.self).pointee = true
-                    return nil
-                }
-                return Unmanaged.passUnretained(event)
-            },
-            userInfo: received
-        ) else {
-            logger.warning("CGEvent tap creation failed — accessibility permission revoked")
-            return false
-        }
-
-        guard let runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            logger.warning("Failed to create RunLoop source for event tap verification")
-            return false
-        }
-
-        // Attach the tap source to the run loop we actually spin below. The
-        // previous code attached it to the MAIN run loop while spinning the
-        // current (off-main) thread's run loop via `CFRunLoopRunInMode`, so the
-        // sentinel callback only fired if the main run loop happened to tick
-        // within the 50ms window. Under startup load the main thread is busy
-        // (model load, credential refresh, prefetch), so delivery was reported
-        // as failed even though posting worked — the source of the spurious
-        // "stale permission" injection blocks right after launch.
-        let runLoop = CFRunLoopGetCurrent()
-        CFRunLoopAddSource(runLoop, runLoopSource, .defaultMode)
-        CGEvent.tapEnable(tap: tap, enable: true)
-        defer {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFRunLoopRemoveSource(runLoop, runLoopSource, .defaultMode)
-        }
-
-        let eventSource = CGEventSource(stateID: .hidSystemState)
-
-        // A freshly enabled .cghidEventTap can miss the very first posted event
-        // before it is fully live, so re-post and re-check across a few short
-        // windows instead of failing after a single 50ms wait.
-        let maxAttempts = 3
-        for attempt in 1 ... maxAttempts {
-            if let testEvent = CGEvent(keyboardEventSource: eventSource, virtualKey: 0xFF, keyDown: true) {
-                testEvent.setIntegerValueField(.eventSourceUserData, value: Self.eventDeliverySentinel)
-                testEvent.post(tap: .cghidEventTap)
-            }
-
-            CFRunLoopRunInMode(.defaultMode, 0.05, false)
-
-            if received.pointee {
-                return true
-            }
-            if attempt < maxAttempts {
-                logger.debug("Event delivery probe miss (attempt \(attempt)/\(maxAttempts)), retrying")
-            }
-        }
-
-        logger.warning(
-            "Event delivery verification failed after \(maxAttempts) attempts — posted event not observed (stale permission)"
-        )
-        return false
     }
 
     /// Simulates Cmd+C via CGEvent (Accessibility permission required).

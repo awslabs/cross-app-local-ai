@@ -355,7 +355,13 @@ final class AppState {
         await handleFirstLaunchFlows()
 
         // Verify accessibility permission on every launch and surface
-        // actionable guidance when it's missing or stale.
+        // actionable guidance when it's missing. A previous round-trip
+        // CGEvent-tap self-test here (verifyEventDelivery) was removed:
+        // it never observed its own posted sentinel event — in bare
+        // scripts, across processes, and inside this app itself — even
+        // while real Cmd+V paste worked, making it a 100% false-negative
+        // gate that unconditionally blocked text insertion. See
+        // scratch/repro_accessibility_insertion.swift and sibling repros.
         if !PermissionChecker.hasAccessibilityPermission {
             logger.warning("Accessibility permission not granted")
             PermissionChecker.requestAccessibilityPermission()
@@ -363,17 +369,6 @@ final class AppState {
                 title: "Accessibility Permission Required",
                 body: "FastLang needs Accessibility permission to capture and insert text. "
                     + "Please enable it in System Settings > Privacy & Security > Accessibility."
-            )
-        } else if !MacPlatformService.verifyEventDelivery() {
-            // Permission appears granted but event posting is blocked
-            // (stale TCC entry after reinstall or code-signature change).
-            logger.warning("Accessibility permission is stale — event delivery verification failed")
-            PermissionChecker.openAccessibilitySettings()
-            presentAlert(
-                title: "Accessibility Permission Needs Refresh",
-                body: "FastLang's accessibility access needs to be refreshed. "
-                    +
-                    "Please remove FastLang from the list and re-add it in the Accessibility settings that just opened."
             )
         }
 
