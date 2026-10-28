@@ -56,7 +56,9 @@ final class KokoroSynthesizer {
 
     private let config: KokoroConfig
     private var network: KokoroNetwork?
-    private let phonemizer: KokoroPhonemizer
+    /// Internal (not `private`) so `@testable import` regression tests can
+    /// assert on `bosId`/`eosId`/`padId` against the real loaded vocabulary.
+    let phonemizer: KokoroPhonemizer
     private var voiceEmbeddings: [String: [Float]]
 
     private init(
@@ -227,12 +229,19 @@ final class KokoroSynthesizer {
     /// Partitions `pred_dur` frames at space-token boundaries to produce per-word start times.
     ///
     /// The phonemizer produces token IDs where spaces (token for " ") delimit word
-    /// boundaries. BOS (1) and EOS (2) are structural tokens. For each contiguous
-    /// run of non-space, non-BOS, non-EOS tokens, the corresponding `pred_dur`
-    /// frames are summed and converted to seconds.
+    /// boundaries. BOS and EOS both equal `padId` (0) -- see the doc comments on
+    /// `KokoroPhonemizer.bosId`/`eosId`. For each contiguous run of non-space,
+    /// non-BOS, non-EOS tokens, the corresponding `pred_dur` frames are summed
+    /// and converted to seconds.
     ///
     /// - Parameters:
     ///   - tokenIds: The actual (unpadded) token IDs produced by the phonemizer.
+    ///     Callers must pass the pre-truncated sequence (BOS + content + EOS,
+    ///     not the model-input-padded array) -- see the call site in `synthesize`,
+    ///     which slices `tokenIds.prefix(tokenCount)` before padding to 128 for
+    ///     the model. This guarantees `sentinelId` (== `padId`) can only match the
+    ///     single leading BOS and single trailing EOS position, never a
+    ///     mid-sequence padding or content token.
     ///   - predDur: The `pred_dur` output tensor from CoreML `[1, 128]`.
     ///   - tokenCount: Number of real (unpadded) tokens.
     ///   - speed: Speed multiplier applied during synthesis.
@@ -247,14 +256,16 @@ final class KokoroSynthesizer {
             logger.warning("Space token not found in vocabulary -- word boundaries will be incorrect")
             return []
         }
-        let bosId = phonemizer.bosId
-        let eosId = phonemizer.eosId
+        // Kokoro-82M has no dedicated BOS/EOS vocabulary entries -- bosId and
+        // eosId both equal padId, the single sentinel used to wrap every
+        // utterance. See the doc comments on KokoroPhonemizer.bosId/eosId.
+        let sentinelId = phonemizer.padId
 
         let durations = Self.readPredDurValues(predDur: predDur, tokenCount: tokenCount)
         let durCount = durations.count
 
         logger.debug(
-            "computeWordOffsets: \(tokenIds.count) tokens, \(durCount) durations, spaceId=\(spaceId), bosId=\(bosId), eosId=\(eosId)"
+            "computeWordOffsets: \(tokenIds.count) tokens, \(durCount) durations, spaceId=\(spaceId), sentinelId=\(sentinelId)"
         )
 
         // Walk tokens, accumulating duration frames per word.
@@ -266,7 +277,7 @@ final class KokoroSynthesizer {
         for i in 0 ..< min(tokenIds.count, durCount) {
             let tok = tokenIds[i]
 
-            if tok == bosId || tok == eosId {
+            if tok == sentinelId {
                 if inWord { inWord = false }
                 cumulativeFrames += durations[i]
                 continue

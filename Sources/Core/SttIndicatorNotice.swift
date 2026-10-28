@@ -2,9 +2,9 @@ import Foundation
 
 /// A message to surface in the floating STT indicator pill, tagged with a
 /// severity that controls how the pill is styled.
-struct SttIndicatorNotice: Equatable, Sendable {
+struct SttIndicatorNotice: Equatable {
     /// Visual severity of an STT indicator notice.
-    enum Kind: Sendable {
+    enum Kind {
         /// A genuine failure (e.g. injection failed, missing Accessibility
         /// permission). Styled as a red error pill.
         case error

@@ -74,11 +74,11 @@ public final class HelperService: NSObject, BedrockHelperProtocol, @unchecked Se
         ) -> Void
     #endif
 
-    // Explicit and `public` because `main.swift` (in the separate
-    // BedrockCredentialHelper xpc-service module) constructs this type
-    // via a plain `import`, not `@testable import`. A public class's
-    // synthesized default initializer is `internal`, not `public`, so
-    // this must be written out.
+    /// Explicit and `public` because `main.swift` (in the separate
+    /// BedrockCredentialHelper xpc-service module) constructs this type
+    /// via a plain `import`, not `@testable import`. A public class's
+    /// synthesized default initializer is `internal`, not `public`, so
+    /// this must be written out.
     override public init() {
         #if INTERNAL_INTERACTIVE_AUTH_ENABLED
             mwinitAuthDelegateProvider = { nil }
@@ -463,10 +463,11 @@ public final class HelperService: NSObject, BedrockHelperProtocol, @unchecked Se
         /// or otherwise) must not be able to trigger it. "run mwinit" covers
         /// the documented real-world phrasing some corporate SSO tools use;
         /// the "mwinit -f"/"mwinit -o" forms cover tools that print the
-        /// literal command instead.
+        /// literal command instead; "retrying: mwinit" covers `isengardcli`'s
+        /// actual wording ("...before retrying: mwinit").
         private static func looksLikeExpiredMwinitSession(_ text: String) -> Bool {
             let lowered = text.lowercased()
-            let triggerPhrases = ["run mwinit", "mwinit -f", "mwinit -o"]
+            let triggerPhrases = ["run mwinit", "mwinit -f", "mwinit -o", "retrying: mwinit"]
             return triggerPhrases.contains { lowered.contains($0) }
         }
     #endif

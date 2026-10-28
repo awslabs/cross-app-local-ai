@@ -5,7 +5,7 @@ private let logger = Logger(subsystem: "com.aws.fastlang", category: "telemetryr
 
 // MARK: - TelemetryReporterError
 
-enum TelemetryReporterError: LocalizedError, Sendable {
+enum TelemetryReporterError: LocalizedError {
     case notConfigured
     case httpError(statusCode: Int)
     case networkError(underlying: String)
@@ -37,7 +37,7 @@ protocol TelemetrySubmitting: Sendable {
 ///
 /// Stateless: each `submit` call constructs a fresh URLRequest. The caller
 /// (TelemetryService) decides when and how often to invoke this.
-struct TelemetryReporter: TelemetrySubmitting, Sendable {
+struct TelemetryReporter: TelemetrySubmitting {
     private let config: TelemetryConfig
     private let session: URLSession
 

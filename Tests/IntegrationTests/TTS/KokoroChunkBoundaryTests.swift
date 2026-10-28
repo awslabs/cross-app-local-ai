@@ -87,9 +87,10 @@ struct KokoroChunkBoundaryTests {
             )
             print("  Word offsets: \(result.wordOffsets.count)")
 
-            // Assert no chunk is truncated beyond the tolerance threshold
+            // Assert no chunk is truncated or implausibly over-length relative
+            // to the model's own duration prediction (two-sided check).
             let driftMs = Int(drift * 1000)
-            #expect(drift < 0.2, "Chunk \(i) truncated: drift=+\(driftMs)ms")
+            #expect(abs(drift) < 0.2, "Chunk \(i) drift out of tolerance: \(driftMs)ms")
 
             // Step 3: Word timing analysis
             let words = WordTokenizer.tokenize(chunk.text, baseOffset: chunk.offset)
@@ -170,6 +171,73 @@ struct KokoroChunkBoundaryTests {
         // Basic sanity: ensure we produced audio for every chunk
         #expect(chunks.count > 0)
         #expect(allSamples.count > 0)
+    }
+
+    /// A single long sentence packed with commas, forcing `TextChunking.waterfallChunk`
+    /// to split at comma boundaries, followed by several short sentences to force
+    /// `TextChunking.splitIntoSentences` to split at period boundaries. Regression
+    /// coverage for the bosId/eosId == padId fix: every resulting chunk boundary
+    /// lands right after a comma or period, which is exactly where a stale
+    /// bosId/eosId (colliding with real ';'/':' vocabulary tokens) would corrupt
+    /// the synthesized audio at both edges.
+    static let punctuationDenseText = """
+    We design systems, build pipelines, optimize workflows, reduce cost, improve \
+    latency, increase reliability, expand coverage, and deliver value, while also \
+    documenting decisions, reviewing designs, mentoring engineers, and shipping \
+    features, every single week, without fail, across every team we support.
+
+    This is a short sentence. Here is another one. And a third. Finally, a fourth.
+    """
+
+    @Test("Comma/period-dense text splits at punctuation and every chunk is clean")
+    func punctuationDenseTextProducesCleanChunks() async throws {
+        guard KokoroModelManager.isModelCached() else {
+            print("SKIP: Kokoro model not cached. Download it in Settings first.")
+            return
+        }
+
+        let synth = try await KokoroSynthesizer.fromPretrained()
+
+        // Regression guard for the bosId/eosId collision bug: Kokoro-82M has no
+        // dedicated BOS/EOS vocabulary entry, so both must equal padId (0), not
+        // the real ';'/':' token ids (1/2).
+        #expect(synth.phonemizer.bosId == synth.phonemizer.padId)
+        #expect(synth.phonemizer.eosId == synth.phonemizer.padId)
+
+        // Direct regression guard against the real loaded vocabulary: padId
+        // (also used as bosId/eosId) must have no real vocab entry, or the
+        // sentinel used by computeWordOffsets would silently collide with an
+        // actual IPA symbol (the original bug: bosId=1/eosId=2 collided with
+        // ';'/':' token ids).
+        #expect(
+            !synth.phonemizer.vocabIds.contains(synth.phonemizer.padId),
+            "padId must not collide with a real vocabulary entry"
+        )
+
+        let sentences = TextChunking.splitIntoSentences(Self.punctuationDenseText, baseOffset: 0)
+        let chunks = splitLongChunks(sentences, synthesizer: synth, language: "en")
+
+        // The long comma-laden sentence plus four short period-terminated
+        // sentences must force multiple chunk boundaries.
+        #expect(chunks.count > 2, "Expected punctuation-dense text to split into multiple chunks")
+
+        for (i, chunk) in chunks.enumerated() {
+            // Direct per-chunk check on the real tokenizer output: every chunk
+            // must bookend with padId, never a real punctuation token id.
+            let realIds = synth.phonemizer.tokenize(chunk.text, language: "en")
+            #expect(realIds.first == synth.phonemizer.padId, "Chunk \(i) does not start with padId")
+            #expect(realIds.last == synth.phonemizer.padId, "Chunk \(i) does not end with padId")
+
+            let result = try synth.synthesize(
+                text: chunk.text,
+                voice: "af_heart",
+                language: "en",
+                speed: 1.0
+            )
+            let drift = result.predictedDuration - result.audioDuration
+            #expect(abs(drift) < 0.2, "Chunk \(i) drift out of tolerance: \(Int(drift * 1000))ms")
+            #expect(result.audio.isEmpty == false, "Chunk \(i) produced no audio")
+        }
     }
 
     // MARK: - Chunk Splitting (uses shared TextChunking.waterfallChunk)

@@ -231,7 +231,7 @@ enum TextMapReduce {
             }
         }
 
-        return results.compactMap { $0 }
+        return results.compactMap(\.self)
     }
 
     // MARK: - Map Reduce

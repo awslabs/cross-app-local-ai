@@ -69,7 +69,7 @@ struct SetReadAloudTextTests {
 struct SummarizeReadAloudTextTests {
 
     @Test("no-ops when rendition is already summarized")
-    func noOpWhenAlreadySummarized() async {
+    func noOpWhenAlreadySummarized() {
         let state = makeTestAppState()
         state.readAloudOriginalText = "Hello world."
         state.readAloudRendition = .summarized
@@ -79,7 +79,7 @@ struct SummarizeReadAloudTextTests {
     }
 
     @Test("no-ops when a summarize is already in progress")
-    func noOpWhenAlreadyInProgress() async {
+    func noOpWhenAlreadyInProgress() {
         let state = makeTestAppState()
         state.readAloudOriginalText = "Hello world."
         state.readAloudSummarizeState = .inProgress(completed: 0, total: 1)
@@ -88,7 +88,7 @@ struct SummarizeReadAloudTextTests {
     }
 
     @Test("no-ops when there is no original text")
-    func noOpWhenOriginalTextNil() async {
+    func noOpWhenOriginalTextNil() {
         let state = makeTestAppState()
         state.readAloudOriginalText = nil
         state.summarizeReadAloudText()
@@ -96,7 +96,7 @@ struct SummarizeReadAloudTextTests {
     }
 
     @Test("no-ops when the original text is empty")
-    func noOpWhenOriginalTextEmpty() async {
+    func noOpWhenOriginalTextEmpty() {
         let state = makeTestAppState()
         state.readAloudOriginalText = ""
         state.summarizeReadAloudText()

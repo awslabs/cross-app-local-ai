@@ -14,7 +14,7 @@ import Foundation
 enum ModelIntegrityHashes {
 
     /// A single model variant's integrity data.
-    struct Entry: Sendable {
+    struct Entry {
         /// HuggingFace commit SHA to pin downloads to (Kokoro only; nil for WhisperKit).
         let revision: String?
         /// Subpath (relative to model root) -> expected lowercase SHA-256 hex.

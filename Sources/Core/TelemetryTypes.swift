@@ -5,7 +5,7 @@ import Foundation
 
 /// Predefined feature codes matching the server-side allowed set.
 /// Keys in `DailySummary.featureCounts`.
-enum TelemetryFeature: String, Codable, CaseIterable, Sendable {
+enum TelemetryFeature: String, Codable, CaseIterable {
     case llmGenerate = "llm_generate"
     case sttTranscribe = "stt_transcribe"
     case ttsSpeak = "tts_speak"
@@ -18,7 +18,7 @@ enum TelemetryFeature: String, Codable, CaseIterable, Sendable {
 
 /// Predefined error codes matching the server-side allowed set.
 /// Keys in `DailySummary.errorCounts`.
-enum TelemetryError: String, Codable, CaseIterable, Sendable {
+enum TelemetryError: String, Codable, CaseIterable {
     case llmLoadFailed = "llm_load_failed"
     case llmGenerateFailed = "llm_generate_failed"
     case sttLoadFailed = "stt_load_failed"
@@ -32,7 +32,7 @@ enum TelemetryError: String, Codable, CaseIterable, Sendable {
 // MARK: - Daily Summary
 
 /// A single day's accumulated telemetry, matching the API's `POST /v1/events` schema.
-struct DailySummary: Codable, Equatable, Sendable {
+struct DailySummary: Codable, Equatable {
     var deviceId: String
     var appVersion: String
     var osVersion: String
@@ -60,7 +60,7 @@ struct DailySummary: Codable, Equatable, Sendable {
 // MARK: - Update Response
 
 /// Response from `GET /v1/updates`.
-struct UpdateInfo: Codable, Equatable, Sendable {
+struct UpdateInfo: Codable, Equatable {
     let updateAvailable: Bool
     let latestVersion: String?
     let releaseNotes: String?
@@ -69,7 +69,7 @@ struct UpdateInfo: Codable, Equatable, Sendable {
 }
 
 /// Severity level for available updates.
-enum UpdateSeverity: String, Codable, Sendable {
+enum UpdateSeverity: String, Codable {
     case optional
     case recommended
     case critical
@@ -79,7 +79,7 @@ enum UpdateSeverity: String, Codable, Sendable {
 
 /// Runtime telemetry configuration read from the app bundle's Info.plist.
 /// Empty `domain` or `token` disables telemetry (OSS builds).
-struct TelemetryConfig: Equatable, Sendable {
+struct TelemetryConfig: Equatable {
     let domain: String
     let token: String
 

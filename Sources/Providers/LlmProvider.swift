@@ -63,5 +63,7 @@ protocol LlmProvider: Sendable {
 }
 
 extension LlmProvider {
-    var supportsConcurrentRequests: Bool { false }
+    var supportsConcurrentRequests: Bool {
+        false
+    }
 }

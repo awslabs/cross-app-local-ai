@@ -45,14 +45,33 @@ public final class KokoroPhonemizer {
         vocabMap[symbol]
     }
 
+    /// The full set of token IDs with a real vocabulary entry.
+    ///
+    /// Internal (not `private`) so `@testable import` regression tests can
+    /// confirm `padId` has no real vocabulary entry -- the invariant that
+    /// `KokoroSynthesizer.computeWordOffsets` relies on to treat `padId` as a
+    /// safe sentinel without colliding with an actual IPA symbol.
+    var vocabIds: Set<Int> {
+        Set(vocabMap.values)
+    }
+
     /// Pad token ID (0).
     public let padId = 0
 
     /// Start-of-sequence token ID.
-    public let bosId = 1
+    ///
+    /// Kokoro-82M's vocabulary has no dedicated BOS entry -- id 0 (the same
+    /// value as `padId`) is the sole sentinel used to wrap every utterance.
+    /// Ids 1 and 2 are real vocabulary entries for ';' and ':' respectively;
+    /// using them here would silently misrepresent those characters as
+    /// start/end-of-sequence markers.
+    public let bosId = 0
 
     /// End-of-sequence token ID.
-    public let eosId = 2
+    ///
+    /// See `bosId` -- Kokoro-82M shares a single sentinel (0) for pad, BOS,
+    /// and EOS.
+    public let eosId = 0
 
     /// Dictionary entry: either a simple phoneme string or POS-tagged heteronym.
     enum DictEntry {
