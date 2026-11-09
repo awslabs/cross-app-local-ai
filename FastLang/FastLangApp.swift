@@ -91,6 +91,10 @@ struct FastLangApp: App {
                     appState.config.llm.defaultProvider
                 ),
                 availableSttModels: WhisperKitModels.staticModels(),
+                availableAwsProfiles: appState.availableAwsProfiles,
+                onRefreshAwsProfiles: {
+                    Task { await appState.refreshAwsProfiles() }
+                },
                 downloadState: appState.downloadState,
                 modelCacheVersion: appState.modelCacheVersion,
                 onStartDownload: { modelId in

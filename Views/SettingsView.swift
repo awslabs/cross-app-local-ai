@@ -13,6 +13,14 @@ struct SettingsView: View {
     @Binding var history: History
     var availableLlmModels: [ModelInfo]
     var availableSttModels: [ModelInfo]
+    /// AWS CLI profile names discovered via the Bedrock credential helper.
+    /// Empty when no `~/.aws/config`/`credentials` files exist, the helper
+    /// is unreachable, or `BEDROCK_ENABLED` isn't compiled in — the AWS
+    /// Profile picker falls back to a free-text field in that case.
+    var availableAwsProfiles: [String] = []
+    /// Re-runs AWS profile discovery. Called when the AWS section appears,
+    /// since the user may edit `~/.aws/config` while Settings is open.
+    var onRefreshAwsProfiles: () -> Void = {}
     var downloadState: DownloadState?
     /// Bumped by AppState whenever a model is deleted or a download
     /// finishes. Model status sections read this so SwiftUI
@@ -200,16 +208,65 @@ struct SettingsView: View {
                         TextField("Region", text: $config.llm.region)
                             .multilineTextAlignment(.leading)
                             .textFieldStyle(.roundedBorder)
-                        TextField(
-                            "AWS Profile (optional)",
-                            text: Binding(
-                                get: { config.llm.awsProfile ?? "" },
-                                set: { config.llm.awsProfile = $0.isEmpty ? nil : $0 }
+
+                        if availableAwsProfiles.isEmpty {
+                            // No profiles discovered — either no AWS config
+                            // files exist yet, the helper is unreachable, or
+                            // the user hasn't configured one. Fall back to
+                            // free text rather than block on an empty picker.
+                            TextField(
+                                "AWS Profile (optional)",
+                                text: Binding(
+                                    get: { config.llm.awsProfile ?? "" },
+                                    set: { config.llm.awsProfile = $0.isEmpty ? nil : $0 }
+                                )
                             )
-                        )
-                        .multilineTextAlignment(.leading)
-                        .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.leading)
+                            .textFieldStyle(.roundedBorder)
+                        } else {
+                            Picker(
+                                "AWS Profile",
+                                selection: Binding(
+                                    get: {
+                                        // A stored "default" (typed into the
+                                        // free-text field before profiles
+                                        // were discovered, or into the
+                                        // fallback field when none are) has
+                                        // no tag of its own below — "default"
+                                        // is deliberately filtered out of the
+                                        // ForEach to avoid duplicating this
+                                        // row. Normalize it to "" so
+                                        // selection still resolves here.
+                                        let value = config.llm.awsProfile ?? ""
+                                        return value == "default" ? "" : value
+                                    },
+                                    set: { config.llm.awsProfile = $0.isEmpty ? nil : $0 }
+                                )
+                            ) {
+                                Text("Default").tag("")
+                                // A saved profile that's since disappeared from
+                                // ~/.aws/config (deleted, or typed manually
+                                // before auto-discovery existed) has no
+                                // matching tag below. Surface it instead of
+                                // letting the Picker silently blank out the
+                                // stored value.
+                                if let current = config.llm.awsProfile,
+                                   !current.isEmpty,
+                                   current != "default",
+                                   !availableAwsProfiles.contains(current) {
+                                    Text("\(current) (not found)").tag(current)
+                                }
+                                // "default" is already represented by the
+                                // "Default" row above; listing it again would
+                                // add a confusing duplicate with different
+                                // underlying semantics (nil vs. "default").
+                                ForEach(availableAwsProfiles.filter { $0 != "default" }, id: \.self) { profile in
+                                    Text(profile).tag(profile)
+                                }
+                            }
+                        }
                     }
+                    .onAppear { onRefreshAwsProfiles() }
                 }
             #endif
         }

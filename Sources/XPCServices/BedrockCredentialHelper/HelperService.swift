@@ -403,6 +403,34 @@ public final class HelperService: NSObject, BedrockHelperProtocol, @unchecked Se
         reply(stdoutData, nil)
     }
 
+    /// Whether `text` (stderr from a failed `credential_process`, or
+    /// the composed error message built from it) indicates an expired
+    /// mwinit-backed corporate SSO session.
+    ///
+    /// Pure string matching with no dependency on the internal-only
+    /// interactive-auth types, so it is NOT gated behind
+    /// `INTERNAL_INTERACTIVE_AUTH_ENABLED`: it drives both the automatic
+    /// interactive-reauth trigger below (internal builds only) AND
+    /// `exitCodeHint`'s "run mwinit" text hint (all builds), so the two
+    /// share one source of truth instead of drifting. Release/OSS builds
+    /// never compile the interactive panel/launcher, but they still need
+    /// this match to turn opaque stderr into an actionable hint.
+    ///
+    /// Deliberately matches specific known phrases rather than the
+    /// bare substring "mwinit": this check gates an automatic
+    /// interactive PIN/hardware-key-touch prompt on internal builds, so a
+    /// credential_process that merely emits "mwinit" somewhere in its
+    /// stderr (adversarial or otherwise) must not be able to trigger it.
+    /// "run mwinit" covers the documented real-world phrasing some
+    /// corporate SSO tools use; the "mwinit -f"/"mwinit -o" forms cover
+    /// tools that print the literal command instead; "retrying: mwinit"
+    /// covers `isengardcli`'s actual wording ("...before retrying: mwinit").
+    private static func looksLikeExpiredMwinitSession(_ text: String) -> Bool {
+        let lowered = text.lowercased()
+        let triggerPhrases = ["run mwinit", "mwinit -f", "mwinit -o", "retrying: mwinit"]
+        return triggerPhrases.contains { lowered.contains($0) }
+    }
+
     #if INTERNAL_INTERACTIVE_AUTH_ENABLED
 
         // MARK: - Interactive mwinit re-authentication
@@ -445,30 +473,6 @@ public final class HelperService: NSObject, BedrockHelperProtocol, @unchecked Se
                 logger.info("Interactive mwinit re-authentication succeeded; retrying credential_process")
                 Self.runCredentialProcess(command: command, realHome: realHome, reply: reply)
             }
-        }
-
-        /// Whether `text` (stderr from a failed `credential_process`, or
-        /// the composed error message built from it) indicates an expired
-        /// mwinit-backed corporate SSO session.
-        ///
-        /// Gated behind `INTERNAL_INTERACTIVE_AUTH_ENABLED`: this check
-        /// drives both the automatic interactive-reauth trigger above and
-        /// `exitCodeHint`'s internal-build manual "run mwinit" hint, so
-        /// they share one source of truth instead of drifting.
-        ///
-        /// Deliberately matches specific known phrases rather than the
-        /// bare substring "mwinit": this check gates an automatic
-        /// interactive PIN/hardware-key-touch prompt, so a credential_process
-        /// that merely emits "mwinit" somewhere in its stderr (adversarial
-        /// or otherwise) must not be able to trigger it. "run mwinit" covers
-        /// the documented real-world phrasing some corporate SSO tools use;
-        /// the "mwinit -f"/"mwinit -o" forms cover tools that print the
-        /// literal command instead; "retrying: mwinit" covers `isengardcli`'s
-        /// actual wording ("...before retrying: mwinit").
-        private static func looksLikeExpiredMwinitSession(_ text: String) -> Bool {
-            let lowered = text.lowercased()
-            let triggerPhrases = ["run mwinit", "mwinit -f", "mwinit -o", "retrying: mwinit"]
-            return triggerPhrases.contains { lowered.contains($0) }
         }
     #endif
 
@@ -705,7 +709,11 @@ public final class HelperService: NSObject, BedrockHelperProtocol, @unchecked Se
     /// - Parameter path: The `~/.aws/config` or `~/.aws/credentials` URL to validate.
     /// - Throws: `LlmHelperError` if the file is missing, not a regular file,
     ///   owned by another user, or group/other-writable.
-    private static func validateFileTrust(at path: URL) throws {
+    ///
+    /// Not `private`: shared with `HelperService+ListProfiles.swift`'s
+    /// `listProfiles(realHome:reply:)`, which applies the same trust
+    /// check before reading either file.
+    static func validateFileTrust(at path: URL) throws {
         let attrs: [FileAttributeKey: Any]
         do {
             attrs = try FileManager.default.attributesOfItem(atPath: path.path)
@@ -748,7 +756,10 @@ public final class HelperService: NSObject, BedrockHelperProtocol, @unchecked Se
     /// directory record via `getpwuid`. Avoids `NSHomeDirectory()` and
     /// `FileManager.homeDirectoryForCurrentUser`, which can be
     /// redirected by launchd / sandbox container settings.
-    private static func resolveRealHome() throws -> URL {
+    ///
+    /// Not `private`: shared with `HelperService+ListProfiles.swift`'s
+    /// `listProfiles(reply:)`.
+    static func resolveRealHome() throws -> URL {
         if let pw = getpwuid(getuid()), let cString = pw.pointee.pw_dir {
             return URL(fileURLWithPath: String(cString: cString))
         }
@@ -773,20 +784,19 @@ public final class HelperService: NSObject, BedrockHelperProtocol, @unchecked Se
         case 126:
             "Command found but not executable (permissions?)."
         default:
-            #if INTERNAL_INTERACTIVE_AUTH_ENABLED
-                // Some corporate SSO tools print a "run mwinit" style
-                // phrase to stderr when the session cookie is missing
-                // or expired. Surface that as an actionable hint when
-                // it's present, since it's the most common reason
-                // credential_process fails for internal builds wired
-                // up to interactive re-authentication.
-                looksLikeExpiredMwinitSession(stderr)
-                    ? "Run `mwinit` in a terminal to refresh your session, " +
-                    "then trigger generation again."
-                    : ""
-            #else
-                ""
-            #endif
+            // Some corporate SSO tools print a "run mwinit" style phrase
+            // to stderr when the session cookie is missing or expired.
+            // Surface that as an actionable hint when it's present, since
+            // it's the most common reason credential_process fails.
+            // Internal builds additionally trigger an automatic
+            // interactive re-auth prompt (see
+            // `retryWithInteractiveMwinitAuth`); this text hint is the
+            // only guidance Release/OSS builds get, so it must not be
+            // gated behind `INTERNAL_INTERACTIVE_AUTH_ENABLED`.
+            looksLikeExpiredMwinitSession(stderr)
+                ? "Run `mwinit` in a terminal to refresh your session, " +
+                "then trigger generation again."
+                : ""
         }
     }
 }

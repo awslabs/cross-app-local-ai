@@ -62,7 +62,25 @@ extension AppState {
         isRecording = false
 
         guard let buffer = await audioRecorder.recordedBuffer() else {
-            logger.debug("No audio recorded")
+            // Every buffer during this session stayed below the warmup
+            // silence threshold (e.g. a Bluetooth input mid-codec-switch),
+            // so AudioRecorder never accumulated any bytes. `recordedBuffer()`
+            // being nil doesn't by itself distinguish that from a trivial
+            // accidental tap released before the first tap callback ever
+            // fires (~85ms) — both leave zero accumulated bytes. Only the
+            // former deserves a visible notice; the latter should discard
+            // silently just like the "too short" guard below, so a stray
+            // key tap doesn't produce user-facing error noise. A `nil`
+            // duration (hold time unknown) fails open toward the notice.
+            if let heldDuration = await audioRecorder.recordingDuration(), heldDuration < minSttDurationSeconds {
+                logger.debug("Recording too short (\(heldDuration)s), discarding")
+                sttTargetApp = nil
+                return
+            }
+            logger.warning("No audio recorded; surfacing noAudioCaptured notice")
+            sttIndicatorNotice = Self.sttNotice(for: .noAudioCaptured)
+            recordTelemetryError(.sttNoAudioCaptured)
+            sttTargetApp = nil
             return
         }
 
@@ -70,6 +88,7 @@ extension AppState {
         let durationSeconds = Double(sampleCount) / 16000.0
         guard durationSeconds >= minSttDurationSeconds else {
             logger.debug("Recording too short (\(durationSeconds)s), discarding")
+            sttTargetApp = nil
             return
         }
 
@@ -242,7 +261,19 @@ extension AppState {
         isRecording = false
 
         guard let buffer = await audioRecorder.recordedBuffer() else {
-            logger.debug("No audio recorded for AI search")
+            // See handleSttHotkeyReleased: a warmup gate that never opened
+            // (e.g. a Bluetooth input still mid-codec-switch) leaves
+            // AudioRecorder with zero accumulated bytes, indistinguishable
+            // from a trivial accidental tap without checking hold duration.
+            if let heldDuration = await audioRecorder.recordingDuration(), heldDuration < minSttDurationSeconds {
+                logger.debug("AI search recording too short (\(heldDuration)s), discarding")
+                sttTargetApp = nil
+                return
+            }
+            logger.warning("No audio recorded for AI search; surfacing noAudioCaptured notice")
+            sttIndicatorNotice = Self.sttNotice(for: .noAudioCaptured)
+            recordTelemetryError(.sttNoAudioCaptured)
+            sttTargetApp = nil
             return
         }
 
@@ -250,6 +281,7 @@ extension AppState {
         let durationSeconds = Double(sampleCount) / 16000.0
         guard durationSeconds >= minSttDurationSeconds else {
             logger.debug("AI search recording too short (\(durationSeconds)s), discarding")
+            sttTargetApp = nil
             return
         }
 
@@ -621,6 +653,17 @@ extension AppState {
         if currentLlm != activeLlmConfig { await reconstructLlmService() }
         if currentStt != activeSttConfig { await reconstructSttService() }
         if currentTts != activeTtsConfig { await reconstructTtsService() }
+
+        // The preferred microphone lives on `AudioRecorder`, not in
+        // `SttServiceConfig`, so it isn't covered by the `currentStt` check
+        // above. Without this, picking a different input device in
+        // Settings — e.g. a Bluetooth headset connected mid-session — had
+        // no effect until the app restarted.
+        if config.stt.audioInputDeviceUid != activeAudioInputDeviceUid {
+            audioRecorder.updatePreferredDevice(uid: config.stt.audioInputDeviceUid)
+            activeAudioInputDeviceUid = config.stt.audioInputDeviceUid
+            logger.info("Audio input device updated")
+        }
     }
 
     /// Reconstructs just the LLM service from current config.

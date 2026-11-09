@@ -84,6 +84,14 @@ enum SttError: LocalizedError, Equatable {
     case startingUp
     /// Model file failed SHA-256 integrity verification.
     case modelIntegrityFailed(modelId: String)
+    /// A push-to-talk or AI-search session ended with zero recorded audio
+    /// bytes. This happens when every buffer during the session stayed
+    /// below the warmup silence threshold -- e.g. a Bluetooth input
+    /// device still mid-codec-switch when recording started -- so the
+    /// warmup gate in `AudioRecorder` never opened. Distinct from
+    /// `recordingFailed`, which covers engine/tap setup failures: here
+    /// the engine ran successfully but produced no usable audio.
+    case noAudioCaptured
 
     var errorDescription: String? {
         userMessage
@@ -107,6 +115,7 @@ enum SttError: LocalizedError, Equatable {
         case let .modelIntegrityFailed(modelId):
             "Speech model '\(modelId)' failed integrity verification and was deleted. "
                 + "Please re-download the model."
+        case .noAudioCaptured: "No audio was captured"
         }
     }
 
@@ -122,6 +131,7 @@ enum SttError: LocalizedError, Equatable {
         case .permissionDenied: "Grant microphone access in System Settings > Privacy & Security"
         case .startingUp: "Try again in a few seconds"
         case .modelIntegrityFailed: "Open Settings to re-download the model"
+        case .noAudioCaptured: "Wait a moment for your microphone to connect, then try again"
         }
     }
 }

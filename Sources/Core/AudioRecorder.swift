@@ -38,6 +38,15 @@ protocol AudioRecorderProtocol: Sendable {
     ///
     /// Available after `stop()` is called. Returns `nil` if no audio was recorded.
     func recordedBuffer() async -> AudioBuffer?
+
+    /// Wall-clock duration of the most recently completed recording session,
+    /// measured from `start()` to `stop()`. `nil` if no session has
+    /// completed yet.
+    ///
+    /// `recordedBuffer()` returning `nil` doesn't say whether the key was
+    /// held for a genuine (but silent) session or barely tapped by
+    /// accident; this exposes the timing needed to tell those apart.
+    func recordingDuration() async -> TimeInterval?
 }
 
 // MARK: - RecorderState
@@ -49,6 +58,31 @@ private struct RecorderMutableState {
     var continuation: AsyncStream<AudioChunk>.Continuation?
     var hasSuccessfulConversion = false
     var warmupGatePassed = false
+
+    /// Persistent UID of the preferred input device. `nil` uses the
+    /// system default. Lock-protected (rather than an immutable `let` on
+    /// `AudioRecorder`) so `updatePreferredDevice` can change it after
+    /// construction when the user picks a different microphone in
+    /// Settings.
+    var preferredDeviceUID: String?
+
+    /// Wall-clock timestamp `start()` was called, cleared on `stop()`
+    /// once `lastRecordingDuration` is derived from it.
+    var recordingStartedAt: Date?
+
+    /// Duration of the most recently completed session, computed in
+    /// `stop()`. See `AudioRecorderProtocol.recordingDuration()`.
+    ///
+    /// Reset to `nil` at the start of every session (in `start()`) rather
+    /// than relying solely on `stop()` to overwrite it. No current caller
+    /// can observe a stale value — `recordingDuration()` is only read from
+    /// behind an `isRecording` gate that's only `true` after `start()`
+    /// succeeds, and every successful `start()`/`stop()` pair recomputes
+    /// this fresh — but `start()`'s engine-setup failure path clears
+    /// `recordingStartedAt` without updating this field, so without the
+    /// reset a previous session's value would otherwise sit here stale
+    /// until the next real `stop()`.
+    var lastRecordingDuration: TimeInterval?
 }
 
 /// RMS energy below this threshold is treated as silence during warmup.
@@ -74,20 +108,25 @@ final class AudioRecorder: AudioRecorderProtocol, @unchecked Sendable {
     /// The 16kHz mono float32 format required by WhisperKit.
     private let targetFormat: AVAudioFormat
 
-    /// Persistent UID of the preferred input device. `nil` uses the system default.
-    private let preferredDeviceUID: String?
-
     /// Engine and converter are created fresh per recording session to avoid
     /// `AVAudioEngine`'s "invalid reuse after initialization failure" error.
     private var engine: AVAudioEngine?
     private var converter: AVAudioConverter?
+
+    /// Test seam: when set, `updatePreferredDevice` calls this instead of
+    /// dispatching the real detached `prewarm()`. `nil` (the production
+    /// default) uses the real behavior. Lets unit tests verify the UID
+    /// persists and the re-warm decision fires without touching real
+    /// `AVAudioEngine`/CoreAudio hardware. `internal`, not `private`, so
+    /// `@testable import` tests can set it.
+    var prewarmOverride: (() -> Void)?
 
     /// Creates a new audio recorder.
     ///
     /// - Parameter preferredDeviceUID: Persistent UID of the preferred input device.
     ///   Pass `nil` to use the system default.
     init(preferredDeviceUID: String? = nil) {
-        self.preferredDeviceUID = preferredDeviceUID
+        protectedState.withLock { $0.preferredDeviceUID = preferredDeviceUID }
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 16000.0,
@@ -113,6 +152,103 @@ final class AudioRecorder: AudioRecorderProtocol, @unchecked Sendable {
         logger.info("Audio input pre-warmed (Bluetooth profile switch triggered if needed)")
     }
 
+    /// Updates the preferred input device for subsequent recording sessions
+    /// and, if idle, immediately re-runs `prewarm()` against it.
+    ///
+    /// `AudioRecorder` is constructed once at app startup with whatever
+    /// device was configured at that moment. Without this, picking a
+    /// different microphone in Settings — e.g. a Bluetooth headset that
+    /// connected after launch — had no effect until the app restarted:
+    /// `start()` kept using the stale device. Re-warming immediately also
+    /// means the codec-switch latency lands here instead of on the user's
+    /// next PTT press.
+    ///
+    /// The UID is always persisted so the *next* `start()` picks it up
+    /// regardless of this method's return. The re-warm itself only fires
+    /// when the UID actually changed AND no recording is currently in
+    /// progress. `prewarm()` opens a second `AVAudioEngine`/AUHAL against
+    /// the same hardware a live session's `start()` engine is using;
+    /// without this guard, saving settings mid-PTT (or right as the key is
+    /// released) could force an unwanted Bluetooth profile renegotiation on
+    /// the device the active recording is reading from — the exact glitch
+    /// `prewarm()` exists to avoid in the first place.
+    ///
+    /// `prewarm()` blocks its calling thread for ~500ms while the Bluetooth
+    /// codec switch completes. This method is called from `saveSettings()`
+    /// on the main actor, so the re-warm is detached onto a background task
+    /// (mirroring `AppState.initializeAsync()`'s startup prewarm) to avoid
+    /// freezing the UI every time the user changes their microphone.
+    ///
+    /// The idle check above runs once, synchronously, before this method
+    /// returns — but `Task.detached` doesn't run `prewarm()` until some
+    /// later, unscheduled point. A PTT press can call `start()` in that
+    /// gap, so `shouldRewarmNow()` re-checks idle state immediately before
+    /// `prewarm()` actually opens its engine, narrowing (not eliminating)
+    /// the race. A fully race-free fix would need `start()` to also
+    /// respect a shared "warming" flag; not worth the added complexity for
+    /// this low-severity, timing-dependent glitch.
+    ///
+    /// - Parameter uid: Persistent UID of the new preferred input device.
+    ///   Pass `nil` to use the system default.
+    func updatePreferredDevice(uid: String?) {
+        let shouldPrewarm = protectedState.withLock { locked -> Bool in
+            let changed = locked.preferredDeviceUID != uid
+            locked.preferredDeviceUID = uid
+            return changed && locked.state == .idle
+        }
+        guard shouldPrewarm else { return }
+
+        if let prewarmOverride {
+            prewarmOverride()
+        } else {
+            Task.detached { [self] in
+                guard shouldRewarmNow() else { return }
+                prewarm()
+            }
+        }
+    }
+
+    /// Re-checks idle state at the last possible moment before `prewarm()`
+    /// runs. See the race-window note on `updatePreferredDevice`.
+    /// `internal`, not `private`, so tests can exercise the guard logic
+    /// directly without a timing-dependent async test.
+    func shouldRewarmNow() -> Bool {
+        protectedState.withLock { $0.state == .idle }
+    }
+
+    /// The currently configured preferred input device UID, or `nil` for
+    /// the system default.
+    ///
+    /// Internal (not `private`) so `@testable import` regression tests can
+    /// verify `updatePreferredDevice` actually persisted the new UID,
+    /// without exposing the lock-protected `RecorderMutableState` type
+    /// itself (which stays `private`).
+    var currentPreferredDeviceUID: String? {
+        protectedState.withLock { $0.preferredDeviceUID }
+    }
+
+    /// Forces the lock-protected state value without going through
+    /// `start()`/`stop()`, which require real microphone hardware and OS
+    /// permission. `internal`, not `private`, so `@testable import` tests
+    /// can exercise `updatePreferredDevice`'s recording-state guard
+    /// deterministically. Production code never calls this.
+    func setStateForTesting(_ state: AudioRecorderState) {
+        protectedState.withLock { $0.state = state }
+    }
+
+    /// Forces `recordingDuration()`'s return value without a real
+    /// `start()`/`stop()` cycle. `internal`, not `private`, so
+    /// `@testable import` tests can simulate a specific hold duration
+    /// (e.g. a trivial accidental tap) deterministically. Production code
+    /// never calls this.
+    func setRecordingDurationForTesting(_ duration: TimeInterval?) {
+        protectedState.withLock { $0.lastRecordingDuration = duration }
+    }
+
+    func recordingDuration() async -> TimeInterval? {
+        protectedState.withLock { $0.lastRecordingDuration }
+    }
+
     func start() async throws -> AsyncStream<AudioChunk> {
         let hasPermission = await PermissionChecker.checkMicrophonePermission()
         guard hasPermission else {
@@ -124,6 +260,8 @@ final class AudioRecorder: AudioRecorderProtocol, @unchecked Sendable {
             locked.accumulatedData = Data()
             locked.hasSuccessfulConversion = false
             locked.warmupGatePassed = false
+            locked.recordingStartedAt = Date()
+            locked.lastRecordingDuration = nil
             locked.state = .recording
             return true
         }
@@ -169,6 +307,7 @@ final class AudioRecorder: AudioRecorderProtocol, @unchecked Sendable {
             // re-enters a non-recursive os_unfair_lock and traps (SIGKILL).
             let continuation = protectedState.withLock { locked -> AsyncStream<AudioChunk>.Continuation? in
                 locked.state = .idle
+                locked.recordingStartedAt = nil
                 let continuation = locked.continuation
                 locked.continuation = nil
                 return continuation
@@ -188,7 +327,7 @@ final class AudioRecorder: AudioRecorderProtocol, @unchecked Sendable {
     /// Must be called before `installAudioTap` and `engine.start()`.
     /// Falls back to the system default silently if the UID cannot be resolved.
     private func configureInputDevice(on engine: AVAudioEngine) {
-        guard let uid = preferredDeviceUID else { return }
+        guard let uid = protectedState.withLock({ $0.preferredDeviceUID }) else { return }
 
         guard var deviceID = AudioDeviceEnumerator.deviceID(forUID: uid) else {
             logger.warning("Preferred input device '\(uid)' not found, using system default")
@@ -394,6 +533,10 @@ final class AudioRecorder: AudioRecorderProtocol, @unchecked Sendable {
             let continuation = locked.continuation
             locked.continuation = nil
             locked.state = .idle
+            if let startedAt = locked.recordingStartedAt {
+                locked.lastRecordingDuration = Date().timeIntervalSince(startedAt)
+            }
+            locked.recordingStartedAt = nil
             return (continuation, locked.accumulatedData.count)
         }
         continuation?.finish()
@@ -426,6 +569,12 @@ actor MockAudioRecorder: AudioRecorderProtocol {
     var chunks: [AudioChunk] = []
     var shouldFailOnStart = false
     var failureMessage = "Mock recording failure"
+    /// Test-configurable value for `recordingDuration()`. The mock's own
+    /// `start()`/`stop()` run near-instantly, so there's no real wall-clock
+    /// duration to derive; tests set this directly to exercise callers that
+    /// branch on recording duration (e.g. the short-tap vs. genuine-silence
+    /// distinction in `AppState+Services`).
+    var mockRecordingDuration: TimeInterval?
     private var storedBuffer: AudioBuffer?
 
     func start() async throws -> AsyncStream<AudioChunk> {
@@ -457,5 +606,9 @@ actor MockAudioRecorder: AudioRecorderProtocol {
 
     func recordedBuffer() async -> AudioBuffer? {
         storedBuffer
+    }
+
+    func recordingDuration() async -> TimeInterval? {
+        mockRecordingDuration
     }
 }

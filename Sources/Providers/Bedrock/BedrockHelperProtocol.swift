@@ -27,6 +27,9 @@ import Foundation
 ///   on whichever credential_process tool the user has configured)
 ///   come back through the `errorMessage` reply parameter so the main
 ///   app can surface actionable guidance.
+/// - `listProfiles(reply:)` — enumerates the profile names declared in
+///   `~/.aws/config` and `~/.aws/credentials`, so the main app can
+///   offer them as a picker instead of a free-text field.
 ///
 /// The protocol uses `@objc` types because `NSXPCConnection` proxies
 /// through the Objective-C runtime.
@@ -58,5 +61,26 @@ public protocol BedrockHelperProtocol {
     func fetchCredentials(
         profile: String,
         reply: @escaping @Sendable (_ credentialsJSON: Data?, _ errorMessage: String?) -> Void
+    )
+
+    /// Lists the AWS profile names declared in `~/.aws/config` and
+    /// `~/.aws/credentials`, so the main app can present them as a
+    /// picker instead of requiring the user to type a profile name.
+    ///
+    /// Each file's own `[default]` / `[profile NAME]` / bare `[NAME]`
+    /// section-header conventions are normalized to a plain profile
+    /// name. The default profile, if present, sorts first; the rest
+    /// sort alphabetically. Profiles declared in both files are
+    /// returned once.
+    ///
+    /// - Parameter reply: Called on completion. Exactly one of the two
+    ///   parameters is non-nil:
+    ///   - `profiles` carries the resolved, deduplicated profile names.
+    ///     An empty array (not `nil`) means no AWS configuration files
+    ///     were found or neither declares any profile.
+    ///   - `errorMessage` carries a human-readable failure reason,
+    ///     e.g. when a file fails its ownership/permission trust check.
+    func listProfiles(
+        reply: @escaping @Sendable (_ profiles: [String]?, _ errorMessage: String?) -> Void
     )
 }

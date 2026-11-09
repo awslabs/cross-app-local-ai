@@ -173,10 +173,26 @@ final class AppState {
     var activeSttConfig: SttServiceConfig?
     var activeTtsConfig: TtsServiceConfig?
 
+    /// The input device UID `audioRecorder` is currently configured with.
+    /// Tracked separately from `activeSttConfig` because the preferred
+    /// microphone lives on `AudioRecorder` itself, not in `SttServiceConfig`;
+    /// `saveSettings()` compares this against `config.stt.audioInputDeviceUid`
+    /// to decide whether to push a live device change.
+    var activeAudioInputDeviceUid: String?
+
     // MARK: - Update Notification State
 
     /// Available update info to display in the UI. `nil` means no update banner.
     var availableUpdate: UpdateInfo?
+
+    // MARK: - AWS Profile Picker State
+
+    /// AWS CLI profile names discovered via the Bedrock credential helper,
+    /// offered as a picker in Settings instead of a free-text field. Always
+    /// declared (not `#if BEDROCK_ENABLED`-gated) so `SettingsView` compiles
+    /// unconditionally; stays empty when Bedrock is disabled since
+    /// `refreshAwsProfiles()`'s body is gated instead.
+    var availableAwsProfiles: [String] = []
 
     // MARK: - Internal Components
 
@@ -264,6 +280,7 @@ final class AppState {
         self.appResolver = AppResolver(mappings: mappings)
         self.platformService = MacPlatformService()
         self.audioRecorder = AudioRecorder(preferredDeviceUID: loadedConfig.stt.audioInputDeviceUid)
+        self.activeAudioInputDeviceUid = loadedConfig.stt.audioInputDeviceUid
         self.agent = BackgroundAgent()
 
         // SystemPromptStore can throw; fall back to nil
@@ -283,6 +300,13 @@ final class AppState {
         // never blocked behind multi-GB model loading in Phase 3.
         Task { [self] in
             await initializeTelemetry()
+        }
+
+        // Phase 5: Discover AWS CLI profiles for the Settings picker.
+        // Independent of phases 3/4; a no-op when Bedrock support isn't
+        // compiled in.
+        Task { [self] in
+            await refreshAwsProfiles()
         }
     }
 
@@ -736,6 +760,24 @@ final class AppState {
             language: config.tts.language,
             mockMode: !config.tts.enabled
         )
+    }
+
+    // MARK: - AWS Profile Discovery
+
+    /// Refreshes `availableAwsProfiles` from the Bedrock credential helper's
+    /// `listProfiles` XPC method. Leaves the list untouched (empty) when
+    /// Bedrock support isn't compiled in. Safe to call repeatedly — e.g.
+    /// each time Settings' LLM tab appears — since
+    /// `BedrockProfileLister.listAvailableProfiles()` opens and tears down
+    /// its own XPC connection per call.
+    func refreshAwsProfiles() async {
+        #if BEDROCK_ENABLED
+            do {
+                availableAwsProfiles = try await BedrockProfileLister.listAvailableProfiles()
+            } catch {
+                logger.error("Failed to list AWS profiles: \(error.localizedDescription, privacy: .public)")
+            }
+        #endif
     }
 
     // MARK: - UIEvent Handling

@@ -23,6 +23,7 @@ enum TelemetryError: String, Codable, CaseIterable {
     case llmGenerateFailed = "llm_generate_failed"
     case sttLoadFailed = "stt_load_failed"
     case sttTranscribeFailed = "stt_transcribe_failed"
+    case sttNoAudioCaptured = "stt_no_audio_captured"
     case ttsLoadFailed = "tts_load_failed"
     case ttsSpeakFailed = "tts_speak_failed"
     case modelDownloadFailed = "model_download_failed"

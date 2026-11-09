@@ -115,6 +115,45 @@ struct HelperServiceTests {
         }
     }
 
+    /// Regression test for the bug where Release/OSS builds (which never
+    /// define `INTERNAL_INTERACTIVE_AUTH_ENABLED`) never saw this hint at
+    /// all: the text used to live entirely inside an
+    /// `#if INTERNAL_INTERACTIVE_AUTH_ENABLED` block in `exitCodeHint`, so
+    /// a user whose corporate SSO session expired got a bare
+    /// "exited with status 1" message with no indication that running
+    /// `mwinit` would fix it. `exitCodeHint`'s default-case branch now
+    /// calls `looksLikeExpiredMwinitSession` unconditionally, so this must
+    /// pass in every build configuration, not just internal ones.
+    @Test("hints to run mwinit when credential_process stderr looks like an expired corporate SSO session")
+    func credentialProcessMwinitHintIsNotGatedBehindInternalBuilds() async throws {
+        let config = """
+        [profile my-mwinit-profile]
+        credential_process = /bin/sh -c 'echo "Please run mwinit" >&2; exit 1'
+        """
+        try await withFixtureHome(config: config, permissions: 0o600) { home in
+            let result = await fetchCredentials(HelperService(), profile: "my-mwinit-profile", realHome: home)
+            #expect(result.data == nil)
+            #expect(result.errorMessage?.contains("Run `mwinit` in a terminal") == true)
+        }
+    }
+
+    @Test("does not append a mwinit hint when stderr doesn't look like an expired session")
+    func credentialProcessNoMwinitHintForUnrelatedFailure() async throws {
+        let config = """
+        [profile my-unrelated-failure-profile]
+        credential_process = /bin/sh -c 'echo "network unreachable" >&2; exit 1'
+        """
+        try await withFixtureHome(config: config, permissions: 0o600) { home in
+            let result = await fetchCredentials(
+                HelperService(),
+                profile: "my-unrelated-failure-profile",
+                realHome: home
+            )
+            #expect(result.data == nil)
+            #expect(result.errorMessage?.contains("Run `mwinit`") == false)
+        }
+    }
+
     @Test("matches [default] section without the profile prefix")
     func defaultProfileSection() async throws {
         let payload = #"{"Version":1,"AccessKeyId":"AKIADEFAULT","SecretAccessKey":"shh"}"#
@@ -261,6 +300,138 @@ struct HelperServiceTests {
             let result = await fetchCredentials(HelperService(), profile: "default", realHome: home)
             #expect(result.data == nil)
             #expect(result.errorMessage?.contains("writable by group or other") == true)
+        }
+    }
+
+    // MARK: - listProfiles
+
+    private func listProfiles(realHome: URL) async -> (profiles: [String]?, errorMessage: String?) {
+        await withCheckedContinuation { continuation in
+            HelperService.listProfiles(realHome: realHome) { profiles, errorMessage in
+                continuation.resume(returning: (profiles, errorMessage))
+            }
+        }
+    }
+
+    @Test("replies with an empty array, not an error, when neither config nor credentials exists")
+    func listProfilesNoConfigurationFound() async throws {
+        try await withFixtureHome { home in
+            let result = await listProfiles(realHome: home)
+            #expect(result.errorMessage == nil)
+            #expect(result.profiles?.isEmpty == true)
+        }
+    }
+
+    @Test("lists [default] and [profile NAME] sections from ~/.aws/config, default first")
+    func listProfilesFromConfig() async throws {
+        let config = """
+        [default]
+        region = us-east-1
+
+        [profile work]
+        region = us-west-2
+
+        [profile personal]
+        region = eu-west-1
+        """
+        try await withFixtureHome(config: config, permissions: 0o600) { home in
+            let result = await listProfiles(realHome: home)
+            #expect(result.errorMessage == nil)
+            #expect(result.profiles == ["default", "personal", "work"])
+        }
+    }
+
+    @Test("lists bare-name sections from ~/.aws/credentials without a profile prefix")
+    func listProfilesFromCredentials() async throws {
+        let credentials = """
+        [default]
+        aws_access_key_id = AKIAFAKE
+        aws_secret_access_key = shh
+
+        [staging]
+        aws_access_key_id = AKIASTAGING
+        aws_secret_access_key = shh
+        """
+        try await withFixtureHome(credentials: credentials, permissions: 0o600) { home in
+            let result = await listProfiles(realHome: home)
+            #expect(result.errorMessage == nil)
+            #expect(result.profiles == ["default", "staging"])
+        }
+    }
+
+    @Test("merges and deduplicates profiles declared in both files")
+    func listProfilesMergesBothFiles() async throws {
+        let config = """
+        [default]
+        region = us-east-1
+
+        [profile shared]
+        region = us-west-2
+        """
+        let credentials = """
+        [shared]
+        aws_access_key_id = AKIASHARED
+        aws_secret_access_key = shh
+
+        [creds-only]
+        aws_access_key_id = AKIACREDSONLY
+        aws_secret_access_key = shh
+        """
+        try await withFixtureHome(config: config, credentials: credentials, permissions: 0o600) { home in
+            let result = await listProfiles(realHome: home)
+            #expect(result.errorMessage == nil)
+            #expect(result.profiles == ["default", "creds-only", "shared"])
+        }
+    }
+
+    @Test("refuses to trust a world-writable ~/.aws/config when listing profiles")
+    func listProfilesRejectsWorldWritableConfig() async throws {
+        let config = """
+        [profile my-profile]
+        region = us-east-1
+        """
+        try await withFixtureHome(config: config, permissions: 0o666) { home in
+            let result = await listProfiles(realHome: home)
+            #expect(result.profiles == nil)
+            #expect(result.errorMessage?.contains("writable by group or other") == true)
+        }
+    }
+
+    @Test("refuses to trust a world-writable ~/.aws/credentials when listing profiles")
+    func listProfilesRejectsWorldWritableCredentials() async throws {
+        let credentials = """
+        [default]
+        aws_access_key_id = AKIAFAKE
+        aws_secret_access_key = shh
+        """
+        try await withFixtureHome(credentials: credentials, permissions: 0o666) { home in
+            let result = await listProfiles(realHome: home)
+            #expect(result.profiles == nil)
+            #expect(result.errorMessage?.contains("writable by group or other") == true)
+        }
+    }
+
+    @Test("excludes sso-session, services, and other non-profile sections from ~/.aws/config")
+    func listProfilesExcludesNonProfileSections() async throws {
+        let config = """
+        [default]
+        region = us-east-1
+
+        [profile work]
+        region = us-west-2
+
+        [sso-session my-sso]
+        sso_region = us-east-1
+        sso_start_url = https://example.awsapps.com/start
+
+        [services my-services]
+        s3 =
+          endpoint_url = https://s3.example.com
+        """
+        try await withFixtureHome(config: config, permissions: 0o600) { home in
+            let result = await listProfiles(realHome: home)
+            #expect(result.errorMessage == nil)
+            #expect(result.profiles == ["default", "work"])
         }
     }
 

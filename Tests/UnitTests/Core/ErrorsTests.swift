@@ -94,6 +94,7 @@ struct SttErrorTests {
             .modelNotFound(modelId: "whisper-large"),
             .permissionDenied,
             .modelIntegrityFailed(modelId: "whisper-small"),
+            .noAudioCaptured,
         ]
         for error in cases {
             #expect(!error.userMessage.isEmpty, "Empty message for \(error)")
@@ -105,6 +106,19 @@ struct SttErrorTests {
         let error = SttError.modelIntegrityFailed(modelId: "whisper-small")
         #expect(error.suggestedAction != nil)
         #expect(error.suggestedAction?.contains("re-download") == true)
+    }
+
+    @Test("noAudioCaptured has a user message and a suggested action")
+    func noAudioCapturedHasMessageAndAction() {
+        let error = SttError.noAudioCaptured
+        #expect(error.userMessage == "No audio was captured")
+        #expect(error.suggestedAction != nil)
+    }
+
+    @Test("noAudioCaptured errorDescription matches userMessage")
+    func noAudioCapturedErrorDescription() {
+        let error = SttError.noAudioCaptured
+        #expect(error.errorDescription == error.userMessage)
     }
 }
 
